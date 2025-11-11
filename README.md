@@ -1,221 +1,212 @@
 # Nodify 🧠
 
-Nodify is a cross-platform mobile application for creating, editing, and visualizing mind maps.
+Nodify je multiplatformová mobilná aplikácia určená na tvorbu, úpravu a vizualizáciu myšlienkových máp.
 
-This project is being developed as part of a bachelor thesis at **Comenius University in Bratislava**. The main focus is:
+Tento projekt je vyvíjaný ako súčasť bakalárskej práce na **Univerzite Komenského v Bratislave**. Hlavné zameranie je na:
 
-- support for the widely used mind map formats **XMind (.xmind)** and **FreeMind (.mm)**,
-- interoperability between desktop tools and a mobile client,
-- modern, touch-friendly user interface with smooth interactions,
-- offline-first approach with the option to add cloud synchronization across devices.
+* podporu široko používaných formátov myšlienkových máp **XMind (.xmind)** a **FreeMind (.mm)**,
+* interoperabilitu medzi desktopovými nástrojmi a mobilným klientom,
+* moderné, dotykové používateľské rozhranie s plynulými interakciami,
+* prístup "offline-first" s možnosťou pridania cloudovej synchronizácie naprieč zariadeniami.
 
-The goal is to provide a practical tool that allows users to:
+Cieľom je poskytnúť praktický nástroj, ktorý používateľom umožní:
 
-- open existing mind maps created in other applications,
-- work with them on mobile devices,
-- and save them back in compatible formats without losing the core structure of the map.
+* otvárať existujúce myšlienkové mapy vytvorené v iných aplikáciách,
+* pracovať s nimi na mobilných zariadeniach,
+* a ukladať ich späť v kompatibilných formátoch bez straty základnej štruktúry mapy.
 
 ---
 
 ## Tech Stack
 
-Nodify is built with:
+Nodify je postavený na:
 
-- **React Native** + **Expo** – cross-platform app for Android and iOS
-- **TypeScript** – type safety and maintainable codebase
-- **Expo Router** – file-based navigation
-- **react-native-svg** – rendering of nodes and connections
-- **react-native-gesture-handler** / **Reanimated** (planned) – pan, zoom, drag, interactions
-- **AsyncStorage / SQLite** (planned) – local offline storage
-- **Firebase / Supabase / custom backend** (planned) – cloud synchronization
+* **React Native** + **Expo** – multiplatformová aplikácia pre Android a iOS
+* **TypeScript** – typová bezpečnosť a udržiavateľná kódová základňa
+* **Expo Router** – navigácia založená na súboroch
+* **react-native-svg** – renderovanie uzlov a spojení
+* **react-native-gesture-handler** / **Reanimated** (plánované) – pan, zoom, drag a interakcie
+* **AsyncStorage / SQLite** (plánované) – lokálne offline úložisko
+* **Firebase / Supabase / custom backend** (plánované) – cloudová synchronizácia
 
 ---
 
 ## How to Run
 
-\`\`\`bash
+```bash
 npm install
 npx expo start
-\`\`\`
+```
 
-You can run the app using:
+Aplikáciu môžete spustiť pomocou:
 
-- **Expo Go** on a physical device
-- **Android** or **iOS** simulator
+* **Expo Go** na fyzickom zariadení
+* **Android** alebo **iOS** simulátora
 
-Make sure you have Node.js and the Expo tooling installed.
+Uistite sa, že máte nainštalovaný Node.js a nástroje Expo.
 
 ---
 
 ## Current Status (MVP Prototype)
 
-The current version represents an early MVP foundation:
+Aktuálna verzia predstavuje raný základ MVP:
 
-- base Expo project with clear structure (\\`app/\\`, \\`src/\\`),
-- internal data model for mind maps (\\`MindMap\\`, \\`MindMapNode\\`),
-- basic SVG visualization of a sample mind map based on this model,
-- prepared architecture for:
-  - node interaction (selection, editing),
-  - pan &amp; zoom (to be implemented),
-  - import/export of \\`.mm\\` (FreeMind) and \\`.xmind\\` (XMind) (to be implemented).
+* základný projekt Expo s jasnou štruktúrou (`app/`, `src/`),
+* interný dátový model pre myšlienkové mapy (`MindMap`, `MindMapNode`),
+* základná SVG vizualizácia vzorovej myšlienkovej mapy založenej na tomto modeli,
+* pripravená architektúra pre:
+    * interakciu s uzlami (výber, úprava),
+    * pan & zoom (bude implementované),
+    * import/export `.mm` (FreeMind) a `.xmind` (XMind) (bude implementované).
 
-This repository serves both as:
+Toto úložisko slúži ako:
 
-- the **practical implementation** for the bachelor thesis, and
-- a **starting point** for further development into a production-ready mind map editor.
+* **praktická implementácia** pre bakalársku prácu, a
+* **východiskový bod** pre ďalší vývoj do produkčnej verzie editora myšlienkových máp.
 
 ---
 
 ## Project Roadmap
 
-1. **Mind map editor core**
-   - adding, editing, and deleting nodes,
-   - basic automatic layout around the root node.
+1.  **Jadro editora myšlienkových máp**
+    * pridávanie, úprava a mazanie uzlov,
+    * základné automatické rozloženie okolo koreňového uzla.
 
-2. **Interoperability**
-   - export to **FreeMind (.mm)** and JSON-based **XMind** format,
-   - preserving core tree structure between tools.
+2.  **Interoperabilita**
+    * export do formátov **FreeMind (.mm)** a JSON-založeného formátu **XMind**,
+    * zachovanie základnej stromovej štruktúry medzi nástrojmi.
 
-3. **Storage &amp; Sync**
-   - offline storage on device (AsyncStorage / SQLite),
-   - optional cloud sync (Firebase / Supabase / custom backend).
+3.  **Úložisko & Synchronizácia**
+    * offline úložisko v zariadení (AsyncStorage / SQLite),
+    * voliteľná cloudová synchronizácia (Firebase / Supabase / custom backend).
 
-4. **UX &amp; Extensions**
-   - improved visuals (themes, colors, icons),
-   - smooth gestures (pan, zoom, drag),
-   - foundations for future AI-assisted features.
+4.  **UX & Rozšírenia**
+    * vylepšená vizuálna stránka (témy, farby, ikony),
+    * plynulé gestá (pan, zoom, drag),
+    * základy pre budúce funkcie asistované AI.
 
 ---
 
 ## Bachelor Thesis Context
 
-This repository is part of the practical implementation of a bachelor thesis at **Comenius University in Bratislava**.
+Toto úložisko je súčasťou praktickej implementácie bakalárskej práce na **Univerzite Komenského v Bratislave**.
 
-The thesis focuses on:
+Práca sa zameriava na:
 
-- analysis of XMind and FreeMind and their file formats,
-- design of a mobile application enabling interoperability between these formats,
-- implementation of an MVP demonstrating visualization and internal data structures,
-- outlining further steps towards a fully usable cross-platform mind map editor.
+* analýzu XMind a FreeMind a ich súborových formátov,
+* návrh mobilnej aplikácie umožňujúcej interoperabilitu medzi týmito formátmi,
+* implementáciu MVP demonštrujúceho vizualizáciu a interné dátové štruktúry,
+* načrtnutie ďalších krokov smerom k plne použiteľnému multiplatformovému editoru myšlienkových máp.
 
 ---
 
 ## Public API Documentation
 
-This section documents the main public types and components currently exposed inside the project.  
-It is intended for contributors and for the thesis documentation.
+Táto sekcia dokumentuje hlavné verejné typy a komponenty aktuálne vystavené v projekte. Je určená pre prispievateľov a pre dokumentáciu k práci.
 
-### Type: \`MindMapNode\`
+### Type: `MindMapNode`
 
-**Location:** \`src/types/Map.ts\` (or equivalent)
+**Location:** `src/types/Map.ts` (alebo ekvivalent)
 
-Represents a single node (topic) in a mind map.
-
-**Fields:**
-
-- \`id: string\`  
-  Unique identifier of the node.
-
-- \`parentId: string | null\`  
-  Identifier of the parent node. \`null\` for the root node.
-
-- \`title: string\`  
-  Text label shown in the node.
-
-- \`x: number\`, \`y: number\`  
-  Relative coordinates of the node within the logical map layout (used by the renderer).
-
-- \`children: string[]\`  
-  List of identifiers of direct child nodes.
-
-**Usage:**
-
-- Forms the basic tree structure of the map.
-- Used by rendering components to resolve relationships and positions.
-
----
-
-### Type: \`MindMap\`
-
-**Location:** \`src/types/Map.ts\` (or equivalent)
-
-Represents an entire mind map document.
+Reprezentuje jeden uzol (tému) v myšlienkovej mape.
 
 **Fields:**
 
-- \`id: string\`  
-  Unique identifier of the map.
-
-- \`title: string\`  
-  Human-readable name of the map.
-
-- \`rootId: string\`  
-  Identifier of the root node (must correspond to a key in \`nodes\`).
-
-- \`nodes: Record&lt;string, MindMapNode&gt;\`  
-  Dictionary of all nodes in the map, indexed by node id.
+* `id: string`
+    Unikátny identifikátor uzla.
+* `parentId: string | null`
+    Identifikátor rodičovského uzla. `null` pre koreňový uzol.
+* `title: string`
+    Textový popis zobrazený v uzle.
+* `x: number`, `y: number`
+    Relatívne súradnice uzla v rámci logického rozloženia mapy (používa renderer).
+* `children: string[]`
+    Zoznam identifikátorov priamych detských uzlov.
 
 **Usage:**
 
-- Acts as the in-memory model for visualization,
-- Serves as the source structure for future import/export to FreeMind (.mm) and XMind (.xmind).
+* Tvorí základnú stromovú štruktúru mapy.
+* Používajú ju renderovacie komponenty na vyriešenie vzťahov a pozícií.
 
 ---
 
-### Component: \`MindMapCanvas\`
+### Type: `MindMap`
 
-**Location:** \`src/components/MindMapCanvas.tsx\`
+**Location:** `src/types/Map.ts` (alebo ekvivalent)
 
-Responsible for visual rendering of a given \`MindMap\` using SVG.
+Reprezentuje celý dokument myšlienkovej mapy.
+
+**Fields:**
+
+* `id: string`
+    Unikátny identifikátor mapy.
+* `title: string`
+    Ľudsky čitateľný názov mapy.
+* `rootId: string`
+    Identifikátor koreňového uzla (musí zodpovedať kľúču v `nodes`).
+* `nodes: Record<string, MindMapNode>`
+    Slovník všetkých uzlov v mape, indexovaný podľa ID uzla.
+
+**Usage:**
+
+* Slúži ako in-memory model pre vizualizáciu,
+* Predstavuje zdrojovú štruktúru pre budúci import/export do FreeMind (.mm) a XMind (.xmind).
+
+---
+
+### Component: `MindMapCanvas`
+
+**Location:** `src/components/MindMapCanvas.tsx`
+
+Zodpovedný za vizuálne renderovanie danej `MindMap` pomocou SVG.
 
 **Props:**
 
-- \`map: MindMap\` (required)  
-  Map data to be rendered.
+* `map: MindMap` (povinné)
+    Dáta mapy, ktoré sa majú renderovať.
 
 **Behavior:**
 
-- Computes positioned nodes (absolute coordinates) from the logical model.
-- Draws:
-  - connecting lines between parent and child nodes,
-  - circular nodes for topics,
-  - text labels for each node.
-- Designed to be extended with:
-  - interactive node selection,
-  - hover/tap feedback,
-  - pan and zoom transformations.
+* Vypočíta umiestnené uzly (absolútne súradnice) z logického modelu.
+* Vykreslí:
+    * spojovacie čiary medzi rodičovskými a detskými uzlami,
+    * kruhové uzly pre témy,
+    * textové popisy pre každý uzol.
+* Navrhnutý tak, aby bol rozšírený o:
+    * interaktívny výber uzlov,
+    * spätnú väzbu pri prejdení myšou/ťuknutí,
+    * transformácie pan a zoom.
 
 **Notes:**
 
-- Uses \`react-native-svg\` for all graphical elements.
-- Keeps rendering concerns separate from application state and navigation.
+* Používa `react-native-svg` pre všetky grafické prvky.
+* Udržiava obavy z renderovania oddelené od stavu aplikácie a navigácie.
 
 ---
 
-### Screen: \`MapScreen\`
+### Screen: `MapScreen`
 
-**Location:** \`src/screens/MapScreen.tsx\`
+**Location:** `src/screens/MapScreen.tsx`
 
-Top-level screen showing a mind map inside the app.
+Obrazovka najvyššej úrovne zobrazujúca myšlienkovú mapu v aplikácii.
 
 **Responsibilities:**
 
-- Provides a sample \`MindMap\` (mock data) during the MVP phase.
-- Renders:
-  - page title and basic textual information,
-  - the \`MindMapCanvas\` component with given map data.
-- In later stages will:
-  - manage selected node state,
-  - integrate editing controls (add/delete/rename),
-  - load and save maps from persistent storage.
+* Poskytuje vzorovú `MindMap` (mock dáta) počas fázy MVP.
+* Renderuje:
+    * názov stránky a základné textové informácie,
+    * komponent `MindMapCanvas` s danými dátami mapy.
+* V neskorších fázach bude:
+    * spravovať stav vybraného uzla,
+    * integrovať ovládacie prvky úprav (pridať/odstrániť/premenovať),
+    * načítavať a ukladať mapy z trvalého úložiska.
 
 **Export:**
 
-- Default export of the module, used by Expo Router as one of the main screens.
+* Predvolený export modulu, používaný Expo Router ako jedna z hlavných obrazoviek.
 
 ---
 
 ## Slovak Summary
 
 Nodify je multiplatformová mobilná aplikácia určená na tvorbu, úpravu a vizualizáciu myšlienkových máp, vyvíjaná ako súčasť bakalárskej práce na Univerzite Komenského v Bratislave. Cieľom je podporovať formáty **XMind (.xmind)** a **FreeMind (.mm)**, zlepšiť interoperabilitu medzi desktopovými nástrojmi a mobilnou aplikáciou, umožniť offline prácu a pripraviť priestor pre budúcu cloudovú synchronizáciu. Aktuálna verzia predstavuje MVP zamerané na dátový model, základnú vizualizáciu a návrh architektúry pre ďalší rozvoj aplikácie.
-
