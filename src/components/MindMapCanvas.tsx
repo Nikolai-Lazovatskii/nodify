@@ -1,0 +1,79 @@
+import React from "react";
+import { View } from "react-native";
+import Svg, { Line, Circle, Text as SvgText } from "react-native-svg";
+import { MindMap, MindMapNode } from "../types/map";
+
+interface Props {
+  map: MindMap;
+}
+
+export const MindMapCanvas: React.FC<Props> = ({ map }) => {
+  const width = 400;
+  const height = 400;
+  const centerX = width / 2;
+  const centerY = 150;
+
+  const positionedNodes: Record<string, { node: MindMapNode; x: number; y: number }> =
+    Object.fromEntries(
+      Object.values(map.nodes).map((node) => {
+        if (node.parentId === null) {
+          return [node.id, { node, x: centerX, y: centerY }];
+        }
+        return [
+          node.id,
+          {
+            node,
+            x: centerX + node.x,
+            y: centerY + node.y,
+          },
+        ];
+      })
+    );
+
+  return (
+    <View style={{ flex: 1, marginTop: 16 }}>
+      <Svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`}>
+        {/* линии */}
+        {Object.values(positionedNodes).map(({ node, x, y }) => {
+          if (!node.parentId) return null;
+          const parentPos = positionedNodes[node.parentId];
+          if (!parentPos) return null;
+
+          return (
+            <Line
+              key={`line-${node.id}`}
+              x1={parentPos.x}
+              y1={parentPos.y}
+              x2={x}
+              y2={y}
+              stroke="#9ca3af"
+              strokeWidth={2}
+            />
+          );
+        })}
+
+        {/* узлы */}
+        {Object.values(positionedNodes).map(({ node, x, y }) => {
+          const isRoot = node.parentId === null;
+          const radius = isRoot ? 26 : 20;
+          const fill = isRoot ? "#38bdf8" : "#e5e7eb";
+
+          return (
+            <React.Fragment key={`node-${node.id}`}>
+              <Circle cx={x} cy={y} r={radius} fill={fill} />
+              <SvgText
+                x={x}
+                y={y + 4}
+                fontSize={isRoot ? 12 : 10}
+                fill="#111827"
+                textAnchor="middle"
+              >
+                {node.title}
+              </SvgText>
+            </React.Fragment>
+          );
+        })}
+      </Svg>
+    </View>
+  );
+};
