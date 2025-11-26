@@ -1,4 +1,4 @@
-# Nodify 🧠
+# Nodify 
 
 Nodify je multiplatformová mobilná aplikácia určená na tvorbu, úpravu a vizualizáciu myšlienkových máp.
 
