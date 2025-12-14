@@ -10,6 +10,8 @@ import EditableNodeView from "../components/EditableNodeView";
 import ZoomableCanvas from "../components/ZoomableCanvas";
 
 export default function MapScreen() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
   const [map, setMap] = useState<MindMap>({
     id: "map1",
     title: "Sample Map",
@@ -89,6 +91,8 @@ export default function MapScreen() {
                 key={n.id}
                 node={n}
                 isRoot={n.id === root.id}
+                selected={n.id === selectedId}
+                onSelect={setSelectedId}
                 onUpdateTitle={updateTitle}
               />
             ))}

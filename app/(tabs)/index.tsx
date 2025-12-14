@@ -14,14 +14,12 @@ export default function Index() {
         Nodify 🧠
       </ThemedText>
 
-      <ThemedText style={styles.subtitle}>
-        Mind mapping made simple
-      </ThemedText>
+      <ThemedText style={styles.subtitle}>Mind mapping made simple</ThemedText>
 
       <View style={styles.buttons}>
         <Pressable
           style={styles.primaryButton}
-          onPress={() => router.push("/modal")}
+          onPress={() => router.push("/(tabs)/create")}
         >
           <ThemedText style={styles.primaryText}>
             Create new mind map
@@ -30,13 +28,9 @@ export default function Index() {
 
         <Pressable
           style={styles.secondaryButton}
-          onPress={() => {
-            router.push("/(tabs)/explore");
-          }}
+          onPress={() => router.push("/(tabs)/myMaps")}
         >
-          <ThemedText style={styles.secondaryText}>
-            My mind maps
-          </ThemedText>
+          <ThemedText style={styles.secondaryText}>My mind maps</ThemedText>
         </Pressable>
       </View>
     </ThemedView>
