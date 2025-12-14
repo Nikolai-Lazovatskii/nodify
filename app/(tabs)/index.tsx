@@ -1,5 +1,5 @@
 import React from "react";
-import { View, StyleSheet, Pressable } from "react-native";
+import { View, StyleSheet, Pressable, Image } from "react-native";
 import { useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
@@ -10,8 +10,14 @@ export default function Index() {
 
   return (
     <ThemedView style={styles.container}>
+      <Image
+        source={require("@/assets/Nodify2.png")}
+        style={styles.logo}
+        resizeMode="contain"
+      />
+
       <ThemedText type="title" style={styles.title}>
-        Nodify 🧠
+        Nodify
       </ThemedText>
 
       <ThemedText style={styles.subtitle}>Mind mapping made simple</ThemedText>
@@ -21,9 +27,7 @@ export default function Index() {
           style={styles.primaryButton}
           onPress={() => router.push("/(tabs)/create")}
         >
-          <ThemedText style={styles.primaryText}>
-            Create new mind map
-          </ThemedText>
+          <ThemedText style={styles.primaryText}>Create new mind map</ThemedText>
         </Pressable>
 
         <Pressable
@@ -42,6 +46,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     padding: 24,
+  },
+  logo: {
+    width: 110,
+    height: 110,
+    alignSelf: "center",
+    marginBottom: 18,
   },
   title: {
     textAlign: "center",

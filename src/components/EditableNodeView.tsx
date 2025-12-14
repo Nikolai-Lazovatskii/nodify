@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { PanResponder } from "react-native";
 import { Circle, Text as SvgText, G } from "react-native-svg";
 import { MindMapNode } from "../types/map";
@@ -35,12 +35,11 @@ export default function EditableNodeView({
     scaleRef.current = scale || 1;
   }, [scale]);
 
+  const LONG_PRESS_MS = 220;
+
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragging = useRef(false);
   const startPos = useRef({ x: 0, y: 0 });
-
-  const radius = isRoot ? 26 : 20;
-  const fill = isRoot ? "#38bdf8" : "#e5e7eb";
 
   const panResponder = useRef(
     PanResponder.create({
@@ -56,9 +55,8 @@ export default function EditableNodeView({
           const n = nodeRef.current;
           dragging.current = true;
           startPos.current = { x: n.x, y: n.y };
-          onSelect(n.id);
           onDragStart?.();
-        }, 180);
+        }, LONG_PRESS_MS);
       },
 
       onPanResponderMove: (_, g) => {
@@ -74,10 +72,10 @@ export default function EditableNodeView({
         if (pressTimer.current) clearTimeout(pressTimer.current);
         pressTimer.current = null;
 
-        if (!dragging.current) {
-          onSelect(nodeRef.current.id);
-        } else {
+        if (dragging.current) {
           onDragEnd?.();
+        } else {
+          onSelect(nodeRef.current.id);
         }
 
         dragging.current = false;
@@ -93,6 +91,9 @@ export default function EditableNodeView({
     })
   ).current;
 
+  const radius = isRoot ? 26 : 20;
+  const fill = isRoot ? "#38bdf8" : "#e5e7eb";
+
   return (
     <G {...panResponder.panHandlers}>
       <Circle
@@ -101,7 +102,7 @@ export default function EditableNodeView({
         r={radius}
         fill={fill}
         stroke={selected ? "#0ea5e9" : "transparent"}
-        strokeWidth={selected ? 3 : 0}
+        strokeWidth={selected ? 8 : 0}
       />
       <SvgText
         x={node.x}
