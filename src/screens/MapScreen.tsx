@@ -49,6 +49,48 @@ export default function MapScreen() {
     }));
   };
 
+const moveNodeTo = (nodeId: string, x: number, y: number) => {
+  const PAD = 6;
+  const rOf = (id: string, rootId: string) => (id === rootId ? 26 : 20);
+
+  setMap((prev) => {
+    const selfR = rOf(nodeId, prev.rootId);
+
+    let nx = x;
+    let ny = y;
+
+    for (let pass = 0; pass < 4; pass++) {
+      for (const [otherId, other] of Object.entries(prev.nodes)) {
+        if (otherId === nodeId) continue;
+
+        const otherR = rOf(otherId, prev.rootId);
+        const minDist = selfR + otherR + PAD;
+
+        const dx = nx - other.x;
+        const dy = ny - other.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < minDist) {
+          const safe = dist === 0 ? 1 : dist;
+          const ux = dx / safe;
+          const uy = dy / safe;
+
+          nx = other.x + ux * minDist;
+          ny = other.y + uy * minDist;
+        }
+      }
+    }
+
+    return {
+      ...prev,
+      nodes: {
+        ...prev.nodes,
+        [nodeId]: { ...prev.nodes[nodeId], x: nx, y: ny },
+      },
+    };
+  });
+};
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Nodify — Mind Map</Text>
@@ -76,6 +118,7 @@ export default function MapScreen() {
                   isRoot={n.id === root.id}
                   selected={n.id === selectedId}
                   onSelect={setSelectedId}
+                  onMoveTo={moveNodeTo}
                 />
               ))}
             </Svg>
