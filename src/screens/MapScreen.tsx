@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { View, Pressable, StyleSheet, Text } from "react-native";
 import Svg from "react-native-svg";
 
 import { MindMap, MindMapNode } from "../types/map";
@@ -27,37 +27,15 @@ export default function MapScreen() {
         y: 0,
         children: ["c1", "c2", "c3"],
       },
-      c1: {
-        id: "c1",
-        parentId: "root",
-        title: "Research",
-        x: -140,
-        y: 120,
-        children: [],
-      },
-      c2: {
-        id: "c2",
-        parentId: "root",
-        title: "Design",
-        x: 0,
-        y: 140,
-        children: [],
-      },
-      c3: {
-        id: "c3",
-        parentId: "root",
-        title: "Export",
-        x: 140,
-        y: 120,
-        children: [],
-      },
+      c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [] },
+      c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [] },
+      c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [] },
     },
   });
 
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
-  const root = map.nodes[map.rootId] as MindMapNode;
-
   const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
+
   const bottomInset = selectedNode ? Math.max(inspectorH, 220) : 0;
 
   const updateTitle = (nodeId: string, newTitle: string) => {
@@ -70,37 +48,48 @@ export default function MapScreen() {
     }));
   };
 
-  const moveNodeTo = (nodeId: string, x: number, y: number) => {
+  const resolveCollisionPosition = (
+    prev: MindMap,
+    nodeId: string,
+    x: number,
+    y: number
+  ) => {
     const PAD = 6;
     const rOf = (id: string, rootId: string) => (id === rootId ? 26 : 20);
 
-    setMap((prev) => {
-      const selfR = rOf(nodeId, prev.rootId);
+    const selfR = rOf(nodeId, prev.rootId);
 
-      let nx = x;
-      let ny = y;
+    let nx = x;
+    let ny = y;
 
-      for (let pass = 0; pass < 4; pass++) {
-        for (const [otherId, other] of Object.entries(prev.nodes)) {
-          if (otherId === nodeId) continue;
+    for (let pass = 0; pass < 4; pass++) {
+      for (const [otherId, other] of Object.entries(prev.nodes)) {
+        if (otherId === nodeId) continue;
 
-          const otherR = rOf(otherId, prev.rootId);
-          const minDist = selfR + otherR + PAD;
+        const otherR = rOf(otherId, prev.rootId);
+        const minDist = selfR + otherR + PAD;
 
-          const dx = nx - other.x;
-          const dy = ny - other.y;
-          const dist = Math.hypot(dx, dy);
+        const dx = nx - other.x;
+        const dy = ny - other.y;
+        const dist = Math.hypot(dx, dy);
 
-          if (dist < minDist) {
-            const safe = dist === 0 ? 1 : dist;
-            const ux = dx / safe;
-            const uy = dy / safe;
+        if (dist < minDist) {
+          const safe = dist === 0 ? 1 : dist;
+          const ux = dx / safe;
+          const uy = dy / safe;
 
-            nx = other.x + ux * minDist;
-            ny = other.y + uy * minDist;
-          }
+          nx = other.x + ux * minDist;
+          ny = other.y + uy * minDist;
         }
       }
+    }
+
+    return { x: nx, y: ny };
+  };
+
+  const moveNodeTo = (nodeId: string, x: number, y: number) => {
+    setMap((prev) => {
+      const { x: nx, y: ny } = resolveCollisionPosition(prev, nodeId, x, y);
 
       return {
         ...prev,
@@ -112,38 +101,97 @@ export default function MapScreen() {
     });
   };
 
+  const addChildToSelected = () => {
+    if (!selectedId) return;
+
+    const newId = `n_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    setMap((prev) => {
+      const parent = prev.nodes[selectedId];
+      if (!parent) return prev;
+
+      const siblingsCount = parent.children?.length ?? 0;
+
+      const R = 110;
+      const angleStep = Math.PI / 4;
+      const theta = -Math.PI / 2 + siblingsCount * angleStep;
+
+      const rawX = parent.x + Math.cos(theta) * R;
+      const rawY = parent.y + Math.sin(theta) * R;
+
+      const placed = resolveCollisionPosition(prev, newId, rawX, rawY);
+
+      const child: MindMapNode = {
+        id: newId,
+        parentId: parent.id,
+        title: "New node",
+        x: placed.x,
+        y: placed.y,
+        children: [],
+      };
+
+      const nextParent: MindMapNode = {
+        ...parent,
+        children: [...(parent.children ?? []), newId],
+      };
+
+      return {
+        ...prev,
+        nodes: {
+          ...prev.nodes,
+          [newId]: child,
+          [parent.id]: nextParent,
+        },
+      };
+    });
+
+    setSelectedId(newId);
+  };
+
   return (
     <View style={styles.container}>
-
       <View style={{ flex: 1, marginTop: 12, overflow: "hidden" }}>
         <View style={{ flex: 1, marginBottom: bottomInset }}>
           <ZoomableCanvas>
             <Svg width="100%" height="100%" viewBox="-200 -200 400 400">
-              {root.children.map((cid) => {
-                const child = map.nodes[cid]!;
-                return (
-                  <EdgeView
-                    key={`edge-${cid}`}
-                    from={{ x: root.x, y: root.y }}
-                    to={{ x: child.x, y: child.y }}
-                  />
-                );
-              })}
+              {Object.values(map.nodes).flatMap((p) =>
+                (p.children ?? []).map((cid) => {
+                  const c = map.nodes[cid];
+                  if (!c) return null;
+                  return (
+                    <EdgeView
+                      key={`edge-${p.id}-${cid}`}
+                      from={{ x: p.x, y: p.y }}
+                      to={{ x: c.x, y: c.y }}
+                    />
+                  );
+                })
+              )}
 
               {nodes.map((n) => (
                 <EditableNodeView
                   key={n.id}
                   node={n}
-                  isRoot={n.id === root.id}
+                  isRoot={n.id === map.rootId}
                   selected={n.id === selectedId}
                   onSelect={setSelectedId}
                   onMoveTo={moveNodeTo}
-                  onDragStart={() => setSelectedId(null)}
-                  onDragEnd={() => {}}
                 />
               ))}
             </Svg>
           </ZoomableCanvas>
+
+          {selectedNode && (
+            <Pressable
+              onPress={addChildToSelected}
+              style={({ pressed }) => [
+                ui.addButton,
+                pressed && ui.pressed,
+              ]}
+            >
+              <Text style={ui.addButtonText}>＋</Text>
+            </Pressable>
+          )}
         </View>
 
         <NodeInspector
@@ -158,3 +206,32 @@ export default function MapScreen() {
     </View>
   );
 }
+
+const ui = StyleSheet.create({
+  addButton: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "#0ea5e9",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  addButtonText: {
+    color: "#ffffff",
+    fontSize: 26,
+    lineHeight: 26,
+    fontWeight: "800",
+    marginTop: -2,
+  },
+  pressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.98 }],
+  },
+});
