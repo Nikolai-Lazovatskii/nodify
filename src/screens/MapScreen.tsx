@@ -13,6 +13,8 @@ import ZoomableCanvas from "../components/ZoomableCanvas";
 export default function MapScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorH, setInspectorH] = useState(0);
+  const [draggingNode, setDraggingNode] = useState(false);
+  const [canvasScale, setCanvasScale] = useState(1);
 
   const [map, setMap] = useState<MindMap>({
     id: "map1",
@@ -35,8 +37,11 @@ export default function MapScreen() {
 
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
   const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
-
   const bottomInset = selectedNode ? Math.max(inspectorH, 220) : 0;
+
+  const WORLD_W = 1200;
+  const WORLD_H = 1800;
+  const VIEWBOX = `${-WORLD_W / 2} ${-WORLD_H / 2} ${WORLD_W} ${WORLD_H}`;
 
   const updateTitle = (nodeId: string, newTitle: string) => {
     setMap((prev) => ({
@@ -48,12 +53,7 @@ export default function MapScreen() {
     }));
   };
 
-  const resolveCollisionPosition = (
-    prev: MindMap,
-    nodeId: string,
-    x: number,
-    y: number
-  ) => {
+  const resolveCollisionPosition = (prev: MindMap, nodeId: string, x: number, y: number) => {
     const PAD = 6;
     const rOf = (id: string, rootId: string) => (id === rootId ? 26 : 20);
 
@@ -152,42 +152,49 @@ export default function MapScreen() {
     <View style={styles.container}>
       <View style={{ flex: 1, marginTop: 12, overflow: "hidden" }}>
         <View style={{ flex: 1, marginBottom: bottomInset }}>
-          <ZoomableCanvas>
-            <Svg width="100%" height="100%" viewBox="-200 -200 400 400">
-              {Object.values(map.nodes).flatMap((p) =>
-                (p.children ?? []).map((cid) => {
-                  const c = map.nodes[cid];
-                  if (!c) return null;
-                  return (
-                    <EdgeView
-                      key={`edge-${p.id}-${cid}`}
-                      from={{ x: p.x, y: p.y }}
-                      to={{ x: c.x, y: c.y }}
-                    />
-                  );
-                })
-              )}
+          <ZoomableCanvas
+            enabled={!draggingNode}
+            minScale={0.25}
+            maxScale={40}
+            onScaleChange={setCanvasScale}
+          >
+            <View style={[canvas.stage, { width: WORLD_W, height: WORLD_H }]}>
+              <Svg width={WORLD_W} height={WORLD_H} viewBox={VIEWBOX}>
+                {Object.values(map.nodes).flatMap((p) =>
+                  (p.children ?? []).map((cid) => {
+                    const c = map.nodes[cid];
+                    if (!c) return null;
+                    return (
+                      <EdgeView
+                        key={`edge-${p.id}-${cid}`}
+                        from={{ x: p.x, y: p.y }}
+                        to={{ x: c.x, y: c.y }}
+                      />
+                    );
+                  })
+                )}
 
-              {nodes.map((n) => (
-                <EditableNodeView
-                  key={n.id}
-                  node={n}
-                  isRoot={n.id === map.rootId}
-                  selected={n.id === selectedId}
-                  onSelect={setSelectedId}
-                  onMoveTo={moveNodeTo}
-                />
-              ))}
-            </Svg>
+                {nodes.map((n) => (
+                  <EditableNodeView
+                    key={n.id}
+                    node={n}
+                    isRoot={n.id === map.rootId}
+                    selected={n.id === selectedId}
+                    scale={canvasScale}
+                    onSelect={setSelectedId}
+                    onMoveTo={moveNodeTo}
+                    onDragStart={() => setDraggingNode(true)}
+                    onDragEnd={() => setDraggingNode(false)}
+                  />
+                ))}
+              </Svg>
+            </View>
           </ZoomableCanvas>
 
           {selectedNode && (
             <Pressable
               onPress={addChildToSelected}
-              style={({ pressed }) => [
-                ui.addButton,
-                pressed && ui.pressed,
-              ]}
+              style={({ pressed }) => [ui.addButton, pressed && ui.pressed]}
             >
               <Text style={ui.addButtonText}>＋</Text>
             </Pressable>
@@ -206,6 +213,13 @@ export default function MapScreen() {
     </View>
   );
 }
+
+const canvas = StyleSheet.create({
+  stage: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+});
 
 const ui = StyleSheet.create({
   addButton: {
