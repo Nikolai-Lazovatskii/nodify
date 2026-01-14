@@ -1,13 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { MindMapNode } from "../types/map";
 
 type Props = {
@@ -15,15 +7,28 @@ type Props = {
   nodes: Record<string, MindMapNode>;
   onClose: () => void;
   onUpdateTitle: (nodeId: string, newTitle: string) => void;
-  onHeight?: (h: number) => void;
-  onSelectNode?: (nodeId: string) => void;
+  onUpdateColor: (nodeId: string, color: string | undefined) => void;
+  onHeight: (h: number) => void;
+  onSelectNode: (nodeId: string) => void;
 };
+
+const PALETTE = [
+  "#38bdf8",
+  "#22c55e",
+  "#a855f7",
+  "#f97316",
+  "#ef4444",
+  "#facc15",
+  "#94a3b8",
+  "#e5e7eb",
+];
 
 export default function NodeInspector({
   node,
   nodes,
   onClose,
   onUpdateTitle,
+  onUpdateColor,
   onHeight,
   onSelectNode,
 }: Props) {
@@ -31,244 +36,275 @@ export default function NodeInspector({
 
   useEffect(() => {
     setDraft(node?.title ?? "");
-  }, [node?.id, node?.title]);
+  }, [node?.id]);
 
   const parent = useMemo(() => {
     if (!node?.parentId) return null;
     return nodes[node.parentId] ?? null;
-  }, [node?.parentId, nodes, node?.id]);
+  }, [node?.parentId, nodes]);
 
   const children = useMemo(() => {
     if (!node) return [];
-    const ids = node.children ?? [];
-    return ids.map((id) => nodes[id]).filter(Boolean);
+    return (node.children ?? [])
+      .map((id) => nodes[id])
+      .filter(Boolean) as MindMapNode[];
   }, [node, nodes]);
 
   if (!node) return null;
 
   const submit = () => {
-    const next = draft.trim() || node.title;
-    onUpdateTitle(node.id, next);
+    const next = draft.trim();
+    if (next && next !== node.title) onUpdateTitle(node.id, next);
   };
 
-  const jumpTo = (id: string) => {
-    onSelectNode?.(id);
+  const selectColor = (c: string) => {
+    onUpdateColor(node.id, c);
+  };
+
+  const clearColor = () => {
+    onUpdateColor(node.id, undefined);
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.wrapper}
+    <View
+      style={s.sheet}
+      onLayout={(e) => onHeight(e.nativeEvent.layout.height)}
     >
-      <View
-        style={styles.sheet}
-        onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}
-      >
-        <View style={styles.topRow}>
-          <View style={styles.handle} />
-        </View>
+      <View style={s.header}>
+        <View style={s.grabber} />
+        <Pressable onPress={onClose} style={({ pressed }) => [s.close, pressed && s.pressed]}>
+          <Text style={s.closeText}>Close</Text>
+        </Pressable>
+      </View>
 
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>Node</Text>
+      <Text style={s.title}>Node</Text>
 
+      <View style={s.row}>
+        <Text style={s.label}>Name</Text>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          onBlur={submit}
+          onSubmitEditing={submit}
+          style={s.input}
+          placeholder="Node title"
+          returnKeyType="done"
+        />
+      </View>
+
+      <View style={s.row}>
+        <Text style={s.label}>Color</Text>
+        <View style={s.paletteWrap}>
+          {PALETTE.map((c) => {
+            const active = (node.color ?? "") === c;
+            return (
+              <Pressable
+                key={c}
+                onPress={() => selectColor(c)}
+                style={({ pressed }) => [
+                  s.swatch,
+                  { backgroundColor: c },
+                  active && s.swatchActive,
+                  pressed && s.pressed,
+                ]}
+              />
+            );
+          })}
           <Pressable
-            onPress={onClose}
-            style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
+            onPress={clearColor}
+            style={({ pressed }) => [s.clearBtn, pressed && s.pressed]}
           >
-            <Text style={styles.closeText}>Close</Text>
+            <Text style={s.clearText}>Default</Text>
           </Pressable>
         </View>
+      </View>
 
-        <View style={styles.section}>
-          <Text style={styles.label}>Title</Text>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={submit}
-            onBlur={submit}
-            style={styles.input}
-            placeholder="Node title"
-            returnKeyType="done"
-          />
-        </View>
+      <View style={s.row}>
+        <Text style={s.label}>ID</Text>
+        <Text style={s.value}>{node.id}</Text>
+      </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Links</Text>
+      <View style={s.row}>
+        <Text style={s.label}>Parent</Text>
+        {parent ? (
+          <Pressable
+            onPress={() => onSelectNode(parent.id)}
+            style={({ pressed }) => [s.link, pressed && s.pressed]}
+          >
+            <Text style={s.linkText}>{parent.title}</Text>
+          </Pressable>
+        ) : (
+          <Text style={s.value}>—</Text>
+        )}
+      </View>
 
-          <View style={styles.box}>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Parent</Text>
-
-              {parent ? (
-                <Pressable
-                  onPress={() => jumpTo(parent.id)}
-                  style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
-                >
-                  <Text style={styles.pillText}>{parent.title}</Text>
-                </Pressable>
-              ) : (
-                <Text style={styles.muted}>None</Text>
-              )}
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.rowTop}>
-              <Text style={styles.rowLabel}>Children</Text>
-              <Text style={styles.muted}>{children.length}</Text>
-            </View>
-
-            {children.length === 0 ? (
-              <Text style={styles.muted}>No children</Text>
-            ) : (
-              <View style={styles.childrenWrap}>
-                {children.map((c) => (
-                  <Pressable
-                    key={c.id}
-                    onPress={() => jumpTo(c.id)}
-                    style={({ pressed }) => [styles.childItem, pressed && styles.pressed]}
-                  >
-                    <Text style={styles.childText}>{c.title}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Node settings</Text>
-
-          <View style={styles.placeholderBox}>
-            <View style={styles.placeholderRow}>
-              <Text style={styles.placeholderLabel}>Color</Text>
-              <Text style={styles.placeholderValue}>Soon</Text>
-            </View>
-            <View style={styles.placeholderRow}>
-              <Text style={styles.placeholderLabel}>Icon</Text>
-              <Text style={styles.placeholderValue}>Soon</Text>
-            </View>
-            <View style={styles.placeholderRowNoBorder}>
-              <Text style={styles.placeholderLabel}>Notes</Text>
-              <Text style={styles.placeholderValue}>Soon</Text>
-            </View>
-          </View>
+      <View style={[s.row, { alignItems: "flex-start" }]}>
+        <Text style={s.label}>Children</Text>
+        <View style={s.childrenCol}>
+          {children.length === 0 ? (
+            <Text style={s.value}>—</Text>
+          ) : (
+            children.map((c) => (
+              <Pressable
+                key={c.id}
+                onPress={() => onSelectNode(c.id)}
+                style={({ pressed }) => [s.link, pressed && s.pressed]}
+              >
+                <Text style={s.linkText}>{c.title}</Text>
+              </Pressable>
+            ))
+          )}
         </View>
       </View>
-    </KeyboardAvoidingView>
+
+      <View style={s.futureBox}>
+        <Text style={s.futureTitle}>Future settings</Text>
+        <Text style={s.futureText}>Placeholders for node options</Text>
+      </View>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
+const s = StyleSheet.create({
+  sheet: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-  },
-  sheet: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 18,
     backgroundColor: "#ffffff",
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.08)",
     shadowColor: "#000",
     shadowOpacity: 0.12,
-    shadowRadius: 14,
+    shadowRadius: 18,
     elevation: 10,
   },
-  topRow: { alignItems: "center", paddingBottom: 6 },
-  handle: {
-    width: 44,
-    height: 5,
-    borderRadius: 99,
-    backgroundColor: "rgba(0,0,0,0.12)",
-  },
-  headerRow: {
-    flexDirection: "row",
+  header: {
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 10,
+    justifyContent: "center",
+    marginBottom: 6,
   },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
-  closeBtn: {
+  grabber: {
+    width: 44,
+    height: 4,
+    borderRadius: 4,
+    backgroundColor: "#e5e7eb",
+    marginBottom: 8,
+  },
+  close: {
+    position: "absolute",
+    right: 0,
+    top: 0,
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 10,
-    backgroundColor: "rgba(0,0,0,0.06)",
   },
-  closeText: { fontSize: 13, fontWeight: "600", color: "#111827" },
-  pressed: { opacity: 0.6 },
-
-  section: { gap: 8, paddingTop: 8 },
-  label: { fontSize: 12, fontWeight: "600", color: "rgba(17,24,39,0.75)" },
+  closeText: {
+    color: "#0ea5e9",
+    fontWeight: "700",
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 10,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  label: {
+    width: 70,
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: "700",
+  },
+  value: {
+    flex: 1,
+    fontSize: 14,
+    color: "#111827",
+  },
   input: {
-    height: 42,
+    flex: 1,
+    height: 38,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.12)",
-    borderRadius: 12,
+    borderColor: "#e5e7eb",
+    borderRadius: 10,
     paddingHorizontal: 12,
     fontSize: 14,
     color: "#111827",
-    backgroundColor: "#ffffff",
   },
-
-  sectionTitle: { fontSize: 12, fontWeight: "700", color: "rgba(17,24,39,0.75)" },
-
-  box: {
+  paletteWrap: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+  },
+  swatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    borderRadius: 12,
+    borderColor: "rgba(0,0,0,0.08)",
+  },
+  swatchActive: {
+    borderWidth: 3,
+    borderColor: "#111827",
+  },
+  clearBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f8fafc",
+  },
+  clearText: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "700",
+  },
+  link: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: "#f1f5f9",
+  },
+  linkText: {
+    fontSize: 13,
+    color: "#0ea5e9",
+    fontWeight: "800",
+  },
+  childrenCol: {
+    flex: 1,
+    gap: 6,
+  },
+  futureBox: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
     padding: 12,
-    backgroundColor: "rgba(0,0,0,0.02)",
-    gap: 10,
   },
-  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rowLabel: { fontSize: 13, fontWeight: "700", color: "#111827" },
-  muted: { fontSize: 13, color: "rgba(17,24,39,0.55)", fontWeight: "600" },
-  divider: { height: 1, backgroundColor: "rgba(0,0,0,0.06)" },
-
-  pill: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(14,165,233,0.12)",
+  futureTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 4,
   },
-  pillText: { fontSize: 13, fontWeight: "700", color: "#0ea5e9" },
-
-  childrenWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  childItem: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(0,0,0,0.06)",
+  futureText: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
   },
-  childText: { fontSize: 13, fontWeight: "700", color: "#111827" },
-
-  placeholderBox: {
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: "rgba(0,0,0,0.02)",
+  pressed: {
+    opacity: 0.7,
   },
-  placeholderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.06)",
-  },
-  placeholderRowNoBorder: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-  },
-  placeholderLabel: { fontSize: 13, color: "#111827", fontWeight: "600" },
-  placeholderValue: { fontSize: 13, color: "rgba(17,24,39,0.45)", fontWeight: "600" },
 });

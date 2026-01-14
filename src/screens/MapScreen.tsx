@@ -28,15 +28,17 @@ export default function MapScreen() {
         x: 0,
         y: 0,
         children: ["c1", "c2", "c3"],
+        color: "#38bdf8",
       },
-      c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [] },
-      c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [] },
-      c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [] },
+      c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [], color: "#e5e7eb" },
+      c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [], color: "#e5e7eb" },
+      c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [], color: "#e5e7eb" },
     },
   });
 
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
   const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
+
   const bottomInset = selectedNode ? Math.max(inspectorH, 220) : 0;
 
   const WORLD_W = 1200;
@@ -49,6 +51,16 @@ export default function MapScreen() {
       nodes: {
         ...prev.nodes,
         [nodeId]: { ...prev.nodes[nodeId], title: newTitle },
+      },
+    }));
+  };
+
+  const updateColor = (nodeId: string, color: string | undefined) => {
+    setMap((prev) => ({
+      ...prev,
+      nodes: {
+        ...prev.nodes,
+        [nodeId]: { ...prev.nodes[nodeId], color },
       },
     }));
   };
@@ -128,6 +140,7 @@ export default function MapScreen() {
         x: placed.x,
         y: placed.y,
         children: [],
+        color: "#e5e7eb",
       };
 
       const nextParent: MindMapNode = {
@@ -158,37 +171,35 @@ export default function MapScreen() {
             maxScale={40}
             onScaleChange={setCanvasScale}
           >
-            <View style={[canvas.stage, { width: WORLD_W, height: WORLD_H }]}>
-              <Svg width={WORLD_W} height={WORLD_H} viewBox={VIEWBOX}>
-                {Object.values(map.nodes).flatMap((p) =>
-                  (p.children ?? []).map((cid) => {
-                    const c = map.nodes[cid];
-                    if (!c) return null;
-                    return (
-                      <EdgeView
-                        key={`edge-${p.id}-${cid}`}
-                        from={{ x: p.x, y: p.y }}
-                        to={{ x: c.x, y: c.y }}
-                      />
-                    );
-                  })
-                )}
+            <Svg width={WORLD_W} height={WORLD_H} viewBox={VIEWBOX}>
+              {Object.values(map.nodes).flatMap((p) =>
+                (p.children ?? []).map((cid) => {
+                  const c = map.nodes[cid];
+                  if (!c) return null;
+                  return (
+                    <EdgeView
+                      key={`edge-${p.id}-${cid}`}
+                      from={{ x: p.x, y: p.y }}
+                      to={{ x: c.x, y: c.y }}
+                    />
+                  );
+                })
+              )}
 
-                {nodes.map((n) => (
-                  <EditableNodeView
-                    key={n.id}
-                    node={n}
-                    isRoot={n.id === map.rootId}
-                    selected={n.id === selectedId}
-                    scale={canvasScale}
-                    onSelect={setSelectedId}
-                    onMoveTo={moveNodeTo}
-                    onDragStart={() => setDraggingNode(true)}
-                    onDragEnd={() => setDraggingNode(false)}
-                  />
-                ))}
-              </Svg>
-            </View>
+              {nodes.map((n) => (
+                <EditableNodeView
+                  key={n.id}
+                  node={n}
+                  isRoot={n.id === map.rootId}
+                  selected={n.id === selectedId}
+                  scale={canvasScale}
+                  onSelect={setSelectedId}
+                  onMoveTo={moveNodeTo}
+                  onDragStart={() => setDraggingNode(true)}
+                  onDragEnd={() => setDraggingNode(false)}
+                />
+              ))}
+            </Svg>
           </ZoomableCanvas>
 
           {selectedNode && (
@@ -206,6 +217,7 @@ export default function MapScreen() {
           nodes={map.nodes}
           onClose={() => setSelectedId(null)}
           onUpdateTitle={updateTitle}
+          onUpdateColor={updateColor}
           onHeight={setInspectorH}
           onSelectNode={setSelectedId}
         />
@@ -213,13 +225,6 @@ export default function MapScreen() {
     </View>
   );
 }
-
-const canvas = StyleSheet.create({
-  stage: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-});
 
 const ui = StyleSheet.create({
   addButton: {

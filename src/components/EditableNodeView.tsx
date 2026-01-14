@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { PanResponder } from "react-native";
 import { Circle, Text as SvgText, G } from "react-native-svg";
 import { MindMapNode } from "../types/map";
+import * as Haptics from "expo-haptics";
 
 type Props = {
   node: MindMapNode;
@@ -24,82 +25,105 @@ export default function EditableNodeView({
   onDragStart,
   onDragEnd,
 }: Props) {
-  const nodeRef = useRef(node);
-  const scaleRef = useRef(scale);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const nodeIdRef = useRef(node.id);
+  const scaleRef = useRef(scale || 1);
+  const startPos = useRef({ x: node.x, y: node.y });
+
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draggingRef = useRef(false);
 
   useEffect(() => {
-    nodeRef.current = node;
-  }, [node]);
+    nodeIdRef.current = node.id;
+  }, [node.id]);
 
   useEffect(() => {
     scaleRef.current = scale || 1;
   }, [scale]);
 
-  const LONG_PRESS_MS = 220;
+  useEffect(() => {
+    return () => {
+      if (pressTimer.current) clearTimeout(pressTimer.current);
+    };
+  }, []);
 
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragging = useRef(false);
-  const startPos = useRef({ x: 0, y: 0 });
+  const LONG_PRESS_MS = 220;
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, g) =>
-        dragging.current || Math.abs(g.dx) + Math.abs(g.dy) > 2,
+        draggingRef.current || Math.abs(g.dx) + Math.abs(g.dy) > 2,
 
       onPanResponderGrant: () => {
-        dragging.current = false;
+        draggingRef.current = false;
 
         if (pressTimer.current) clearTimeout(pressTimer.current);
         pressTimer.current = setTimeout(() => {
-          const n = nodeRef.current;
-          dragging.current = true;
-          startPos.current = { x: n.x, y: n.y };
+          draggingRef.current = true;
+          startPos.current = { x: node.x, y: node.y };
+
+          setIsDragging(true);
           onDragStart?.();
+
+          Promise.resolve(
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+          ).catch(() => {});
         }, LONG_PRESS_MS);
       },
 
       onPanResponderMove: (_, g) => {
-        if (!dragging.current) return;
+        if (!draggingRef.current) return;
 
-        const n = nodeRef.current;
         const k = scaleRef.current || 1;
-
-        onMoveTo(n.id, startPos.current.x + g.dx / k, startPos.current.y + g.dy / k);
+        onMoveTo(
+          nodeIdRef.current,
+          startPos.current.x + g.dx / k,
+          startPos.current.y + g.dy / k
+        );
       },
 
       onPanResponderRelease: () => {
         if (pressTimer.current) clearTimeout(pressTimer.current);
         pressTimer.current = null;
 
-        if (dragging.current) {
+        if (draggingRef.current) {
+          setIsDragging(false);
           onDragEnd?.();
         } else {
-          onSelect(nodeRef.current.id);
+          onSelect(nodeIdRef.current);
         }
 
-        dragging.current = false;
+        draggingRef.current = false;
       },
 
       onPanResponderTerminate: () => {
         if (pressTimer.current) clearTimeout(pressTimer.current);
         pressTimer.current = null;
 
-        if (dragging.current) onDragEnd?.();
-        dragging.current = false;
+        if (draggingRef.current) {
+          setIsDragging(false);
+          onDragEnd?.();
+        }
+
+        draggingRef.current = false;
       },
     })
   ).current;
 
-  const radius = isRoot ? 26 : 20;
-  const fill = isRoot ? "#38bdf8" : "#e5e7eb";
+  const baseR = isRoot ? 26 : 20;
+  const r = isDragging ? baseR * 1.4 : baseR;
+
+  const fillDefault = isRoot ? "#38bdf8" : "#e5e7eb";
+  const fill = node.color ?? fillDefault;
 
   return (
     <G {...panResponder.panHandlers}>
       <Circle
         cx={node.x}
         cy={node.y}
-        r={radius}
+        r={r}
         fill={fill}
         stroke={selected ? "#0ea5e9" : "transparent"}
         strokeWidth={selected ? 8 : 0}

@@ -1,17 +1,18 @@
 export type NodeId = string;
 
-export interface MindMapNode {
+export type MindMapNode = {
   id: NodeId;
-  parentId: NodeId | null;
+  parentId: string | null;
   title: string;
   x: number;
   y: number;
-  children: NodeId[];
-}
+  children: string[];
+  color?: string;
+};
 
-export interface MindMap {
+export type MindMap = {
   id: string;
   title: string;
-  rootId: NodeId;
-  nodes: Record<NodeId, MindMapNode>;
-}
+  rootId: string;
+  nodes: Record<string, MindMapNode>;
+};
