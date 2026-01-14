@@ -1,5 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  Animated,
+  PanResponder,
+} from "react-native";
 import { MindMapNode } from "../types/map";
 
 type Props = {
@@ -33,9 +41,15 @@ export default function NodeInspector({
   onSelectNode,
 }: Props) {
   const [draft, setDraft] = useState("");
+  const [measuredH, setMeasuredH] = useState(0);
+
+  const translateY = useRef(new Animated.Value(0)).current;
+  const lastY = useRef(0);
 
   useEffect(() => {
     setDraft(node?.title ?? "");
+    translateY.setValue(0);
+    lastY.current = 0;
   }, [node?.id]);
 
   const parent = useMemo(() => {
@@ -50,29 +64,92 @@ export default function NodeInspector({
       .filter(Boolean) as MindMapNode[];
   }, [node, nodes]);
 
-  if (!node) return null;
-
   const submit = () => {
+    if (!node) return;
     const next = draft.trim();
     if (next && next !== node.title) onUpdateTitle(node.id, next);
   };
 
   const selectColor = (c: string) => {
+    if (!node) return;
     onUpdateColor(node.id, c);
   };
 
   const clearColor = () => {
+    if (!node) return;
     onUpdateColor(node.id, undefined);
   };
 
+  const closeWithAnim = () => {
+    const to = measuredH > 0 ? measuredH : 320;
+    Animated.timing(translateY, {
+      toValue: to,
+      duration: 160,
+      useNativeDriver: true,
+    }).start(() => {
+      translateY.setValue(0);
+      lastY.current = 0;
+      onClose();
+    });
+  };
+
+  const snapBack = () => {
+    Animated.spring(translateY, {
+      toValue: 0,
+      useNativeDriver: true,
+      bounciness: 0,
+      speed: 18,
+    }).start(() => {
+      lastY.current = 0;
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        translateY.stopAnimation((v) => {
+          lastY.current = typeof v === "number" ? v : 0;
+        });
+      },
+      onPanResponderMove: (_, g) => {
+        const next = Math.max(0, lastY.current + g.dy);
+        translateY.setValue(next);
+      },
+      onPanResponderRelease: (_, g) => {
+        const dragged = lastY.current + g.dy;
+        const shouldClose =
+          (measuredH > 0 && dragged > measuredH * 0.28) ||
+          dragged > 120 ||
+          g.vy > 1.25;
+
+        if (shouldClose) closeWithAnim();
+        else snapBack();
+      },
+      onPanResponderTerminate: () => {
+        snapBack();
+      },
+    })
+  ).current;
+
+  if (!node) return null;
+
   return (
-    <View
-      style={s.sheet}
-      onLayout={(e) => onHeight(e.nativeEvent.layout.height)}
+    <Animated.View
+      style={[s.sheet, { transform: [{ translateY }] }]}
+      onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        setMeasuredH(h);
+        onHeight(h);
+      }}
+      {...panResponder.panHandlers}
     >
       <View style={s.header}>
         <View style={s.grabber} />
-        <Pressable onPress={onClose} style={({ pressed }) => [s.close, pressed && s.pressed]}>
+        <Pressable
+          onPress={closeWithAnim}
+          style={({ pressed }) => [s.close, pressed && s.pressed]}
+        >
           <Text style={s.closeText}>Close</Text>
         </Pressable>
       </View>
@@ -161,7 +238,7 @@ export default function NodeInspector({
         <Text style={s.futureTitle}>Future settings</Text>
         <Text style={s.futureText}>Placeholders for node options</Text>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
