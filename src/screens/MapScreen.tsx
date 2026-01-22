@@ -10,31 +10,47 @@ import EditableNodeView from "../components/EditableNodeView";
 import NodeInspector from "../components/NodeInspector";
 import ZoomableCanvas from "../components/ZoomableCanvas";
 
-export default function MapScreen() {
+type Props = {
+  initialMap?: MindMap;
+  onMapChange?: (map: MindMap) => void;
+};
+
+export default function MapScreen({ initialMap, onMapChange }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorH, setInspectorH] = useState(0);
   const [draggingNode, setDraggingNode] = useState(false);
   const [canvasScale, setCanvasScale] = useState(1);
 
-  const [map, setMap] = useState<MindMap>({
-    id: "map1",
-    title: "Sample Map",
-    rootId: "root",
-    nodes: {
-      root: {
-        id: "root",
-        parentId: null,
-        title: "Root",
-        x: 0,
-        y: 0,
-        children: ["c1", "c2", "c3"],
-        color: "#38bdf8",
-      },
-      c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [], color: "#e5e7eb" },
-      c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [], color: "#e5e7eb" },
-      c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [], color: "#e5e7eb" },
-    },
+  const [map, setMap] = useState<MindMap>(() => {
+    return (
+      initialMap ?? {
+        id: "map1",
+        title: "Sample Map",
+        rootId: "root",
+        nodes: {
+          root: {
+            id: "root",
+            parentId: null,
+            title: "Root",
+            x: 0,
+            y: 0,
+            children: ["c1", "c2", "c3"],
+          },
+          c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [] },
+          c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [] },
+          c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [] },
+        },
+      }
+    );
   });
+
+  const applyMap = (updater: (prev: MindMap) => MindMap) => {
+    setMap((prev) => {
+      const next = updater(prev);
+      onMapChange?.(next);
+      return next;
+    });
+  };
 
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
   const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
@@ -46,7 +62,7 @@ export default function MapScreen() {
   const VIEWBOX = `${-WORLD_W / 2} ${-WORLD_H / 2} ${WORLD_W} ${WORLD_H}`;
 
   const updateTitle = (nodeId: string, newTitle: string) => {
-    setMap((prev) => ({
+    applyMap((prev) => ({
       ...prev,
       nodes: {
         ...prev.nodes,
@@ -55,12 +71,12 @@ export default function MapScreen() {
     }));
   };
 
-  const updateColor = (nodeId: string, color: string | undefined) => {
-    setMap((prev) => ({
+  const updateColor = (nodeId: string, newColor: string | undefined) => {
+    applyMap((prev) => ({
       ...prev,
       nodes: {
         ...prev.nodes,
-        [nodeId]: { ...prev.nodes[nodeId], color },
+        [nodeId]: { ...prev.nodes[nodeId], color: newColor },
       },
     }));
   };
@@ -100,9 +116,8 @@ export default function MapScreen() {
   };
 
   const moveNodeTo = (nodeId: string, x: number, y: number) => {
-    setMap((prev) => {
+    applyMap((prev) => {
       const { x: nx, y: ny } = resolveCollisionPosition(prev, nodeId, x, y);
-
       return {
         ...prev,
         nodes: {
@@ -118,7 +133,7 @@ export default function MapScreen() {
 
     const newId = `n_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-    setMap((prev) => {
+    applyMap((prev) => {
       const parent = prev.nodes[selectedId];
       if (!parent) return prev;
 
@@ -140,7 +155,6 @@ export default function MapScreen() {
         x: placed.x,
         y: placed.y,
         children: [],
-        color: "#e5e7eb",
       };
 
       const nextParent: MindMapNode = {
