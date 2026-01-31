@@ -17,7 +17,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 
 import { exportToMm } from "@/src/export/mm";
-import { deleteMap, getMap, listMaps } from "@/src/storage/mapsRepo";
+import { deleteMap, exportMapXmind, getMap, listMaps } from "@/src/storage/mapsRepo";
 
 type MapMeta = {
   id: string;
@@ -34,6 +34,7 @@ export default function MyMapsIndex() {
 
   const [exportId, setExportId] = useState<string | null>(null);
   const [pendingExportId, setPendingExportId] = useState<string | null>(null);
+  const [pendingExportKind, setPendingExportKind] = useState<"mm" | "xmind" | null>(null);
 
   const exportVisible = exportId != null;
 
@@ -130,14 +131,25 @@ export default function MyMapsIndex() {
 
   const runPendingExport = useCallback(() => {
     const id = pendingExportId;
-    if (!id) return;
+    const kind = pendingExportKind;
+    if (!id || !kind) return;
 
     setPendingExportId(null);
+    setPendingExportKind(null);
 
     InteractionManager.runAfterInteractions(() => {
-      doExportMm(id);
+      if (kind === "mm") {
+        doExportMm(id);
+      } else {
+        exportMapXmind(id).catch((e: any) => {
+          Alert.alert(
+            "Export failed",
+            e?.message ? String(e.message) : String(e)
+          );
+        });
+      }
     });
-  }, [doExportMm, pendingExportId]);
+  }, [doExportMm, exportMapXmind, pendingExportId, pendingExportKind]);
 
   return (
     <View style={s.screen}>
@@ -225,12 +237,10 @@ export default function MyMapsIndex() {
               const id = exportId;
               if (!id) return;
 
-              // 1) запоминаем что надо экспортировать
+              setPendingExportKind("mm");
               setPendingExportId(id);
-              // 2) закрываем модалку
               setExportId(null);
 
-              // Android: onDismiss иногда не срабатывает стабильно — подстрахуемся таймером
               if (Platform.OS !== "ios") {
                 setTimeout(() => {
                   runPendingExport();
@@ -239,6 +249,26 @@ export default function MyMapsIndex() {
             }}
           >
             <Text style={sheet.optionText}>.mm (FreeMind)</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [sheet.option, pressed && sheet.pressed]}
+            onPress={() => {
+              const id = exportId;
+              if (!id) return;
+
+              setPendingExportKind("xmind");
+              setPendingExportId(id);
+              setExportId(null);
+
+              if (Platform.OS !== "ios") {
+                setTimeout(() => {
+                  runPendingExport();
+                }, 200);
+              }
+            }}
+          >
+            <Text style={sheet.optionText}>.xmind (XMind)</Text>
           </Pressable>
 
           <Pressable

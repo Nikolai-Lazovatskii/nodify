@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MindMap } from "../types/map";
+import { exportXmind } from "../export/doExportXmind";
 
 export type MapMeta = {
   id: string;
@@ -109,4 +110,13 @@ export async function renameMap(id: string, title: string): Promise<void> {
   const map = await getMap(id);
   if (!map) return;
   await saveMap({ ...map, title });
+}
+
+export async function exportMapXmind(id: string): Promise<void> {
+  const map = await getMap(id);
+  if (!map) {
+    throw new Error("Map not found");
+  }
+
+  await exportXmind(map);
 }
