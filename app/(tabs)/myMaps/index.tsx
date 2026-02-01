@@ -8,7 +8,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
+  Keyboard,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,7 +19,13 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 
 import { exportToMm } from "@/src/export/mm";
-import { deleteMap, exportMapXmind, getMap, listMaps } from "@/src/storage/mapsRepo";
+import {
+  deleteMap,
+  exportMapXmind,
+  getMap,
+  listMaps,
+  renameMap,
+} from "@/src/storage/mapsRepo";
 
 type MapMeta = {
   id: string;
@@ -31,6 +39,9 @@ export default function MyMapsIndex() {
 
   const [items, setItems] = useState<MapMeta[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState<string>("");
 
   const [exportId, setExportId] = useState<string | null>(null);
   const [pendingExportId, setPendingExportId] = useState<string | null>(null);
@@ -79,6 +90,36 @@ export default function MyMapsIndex() {
       ]);
     },
     [reload]
+  );
+
+  const startEdit = useCallback(
+    (id: string, currentTitle: string) => {
+      setEditingId(id);
+      setDraftTitle((currentTitle || "Untitled").trim() || "Untitled");
+    },
+    []
+  );
+
+  const stopEdit = useCallback(() => {
+    setEditingId(null);
+    setDraftTitle("");
+    Keyboard.dismiss();
+  }, []);
+
+  const commitRename = useCallback(
+    async (id: string, fallbackTitle: string) => {
+      const next = (draftTitle || "").trim();
+      const safe = next.length ? next : (fallbackTitle || "Untitled").trim() || "Untitled";
+
+      stopEdit();
+
+      const prev = (fallbackTitle || "").trim();
+      if (prev === safe) return;
+
+      await renameMap(id, safe);
+      await reload();
+    },
+    [draftTitle, reload, stopEdit]
   );
 
   const doExportMm = useCallback(async (id: string) => {
@@ -177,9 +218,34 @@ export default function MyMapsIndex() {
             style={({ pressed }) => [s.card, pressed && s.pressed]}
           >
             <View style={s.cardTop}>
-              <Text style={s.title} numberOfLines={1}>
-                {item.title || "Untitled"}
-              </Text>
+              <Pressable
+                style={s.titlePress}
+                onPress={() => {
+                  if (editingId === item.id) return;
+                  startEdit(item.id, item.title || "Untitled");
+                }}
+              >
+                {editingId === item.id ? (
+                  <TextInput
+                    value={draftTitle}
+                    onChangeText={setDraftTitle}
+                    autoFocus
+                    selectTextOnFocus
+                    style={s.titleInput}
+                    returnKeyType="done"
+                    blurOnSubmit
+                    onSubmitEditing={() => commitRename(item.id, item.title || "Untitled")}
+                    onBlur={() => commitRename(item.id, item.title || "Untitled")}
+                    autoCorrect={false}
+                    autoCapitalize="sentences"
+                    maxLength={80}
+                  />
+                ) : (
+                  <Text style={s.title} numberOfLines={1}>
+                    {item.title || "Untitled"}
+                  </Text>
+                )}
+              </Pressable>
 
               <Text style={s.meta}>
                 {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ""}
@@ -314,6 +380,22 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
     marginBottom: 10,
+  },
+  titlePress: {
+    flex: 1,
+    minHeight: 34,
+    justifyContent: "center",
+  },
+  titleInput: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f172a",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.14)",
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.03)",
   },
   title: { flex: 1, fontSize: 16, fontWeight: "800", color: "#0f172a" },
   meta: { fontSize: 12, color: "rgba(15,23,42,0.55)", fontWeight: "600" },
