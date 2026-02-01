@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { View, Pressable, StyleSheet, Text } from "react-native";
 import Svg from "react-native-svg";
 
-import { MindMap, MindMapNode } from "../types/map";
+import { MindMap, MindMapNode, EdgeStyle, NodeShape } from "../types/map";
 import { styles } from "./MapScreen.styles";
 
 import EdgeView from "../components/EdgeView";
@@ -35,10 +35,11 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             x: 0,
             y: 0,
             children: ["c1", "c2", "c3"],
+            shape: "circle",
           },
-          c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [] },
-          c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [] },
-          c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [] },
+          c1: { id: "c1", parentId: "root", title: "Research", x: -140, y: 120, children: [], shape: "circle", edgeToParent: { style: "solid", width: 2, color: "#9ca3af" } },
+          c2: { id: "c2", parentId: "root", title: "Design", x: 0, y: 140, children: [], shape: "circle", edgeToParent: { style: "solid", width: 2, color: "#9ca3af" } },
+          c3: { id: "c3", parentId: "root", title: "Export", x: 140, y: 120, children: [], shape: "circle", edgeToParent: { style: "solid", width: 2, color: "#9ca3af" } },
         },
       }
     );
@@ -77,6 +78,35 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       nodes: {
         ...prev.nodes,
         [nodeId]: { ...prev.nodes[nodeId], color: newColor },
+      },
+    }));
+  };
+
+  const updateShape = (nodeId: string, shape: NodeShape | undefined) => {
+    applyMap((prev) => ({
+      ...prev,
+      nodes: {
+        ...prev.nodes,
+        [nodeId]: { ...prev.nodes[nodeId], shape },
+      },
+    }));
+  };
+
+  const updateEdge = (
+    nodeId: string,
+    patch: { style?: EdgeStyle; width?: number; color?: string }
+  ) => {
+    applyMap((prev) => ({
+      ...prev,
+      nodes: {
+        ...prev.nodes,
+        [nodeId]: {
+          ...prev.nodes[nodeId],
+          edgeToParent: {
+            ...(prev.nodes[nodeId].edgeToParent ?? { style: "solid", width: 2, color: "#9ca3af" }),
+            ...patch,
+          },
+        },
       },
     }));
   };
@@ -155,6 +185,8 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         x: placed.x,
         y: placed.y,
         children: [],
+        shape: "circle",
+        edgeToParent: { style: "solid", width: 2, color: "#9ca3af" },
       };
 
       const nextParent: MindMapNode = {
@@ -195,6 +227,9 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                       key={`edge-${p.id}-${cid}`}
                       from={{ x: p.x, y: p.y }}
                       to={{ x: c.x, y: c.y }}
+                      edgeStyle={(c.edgeToParent?.style ?? "solid")}
+                      width={(c.edgeToParent?.width ?? 2)}
+                      color={(c.edgeToParent?.color ?? "#9ca3af")}
                     />
                   );
                 })
@@ -207,6 +242,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                   isRoot={n.id === map.rootId}
                   selected={n.id === selectedId}
                   scale={canvasScale}
+                  shape={n.shape}
                   onSelect={setSelectedId}
                   onMoveTo={moveNodeTo}
                   onDragStart={() => setDraggingNode(true)}
@@ -232,6 +268,8 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
           onClose={() => setSelectedId(null)}
           onUpdateTitle={updateTitle}
           onUpdateColor={updateColor}
+          onUpdateShape={updateShape}
+          onUpdateEdge={updateEdge}
           onHeight={setInspectorH}
           onSelectNode={setSelectedId}
         />

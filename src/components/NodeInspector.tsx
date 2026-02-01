@@ -8,7 +8,7 @@ import {
   Animated,
   PanResponder,
 } from "react-native";
-import { MindMapNode } from "../types/map";
+import { MindMapNode, NodeShape, EdgeStyle } from "../types/map";
 
 type Props = {
   node: MindMapNode | null;
@@ -18,6 +18,11 @@ type Props = {
   onUpdateColor: (nodeId: string, color: string | undefined) => void;
   onHeight: (h: number) => void;
   onSelectNode: (nodeId: string) => void;
+  onUpdateShape?: (nodeId: string, shape: NodeShape | undefined) => void;
+  onUpdateEdge?: (
+    nodeId: string,
+    patch: { style?: EdgeStyle; width?: number; color?: string }
+  ) => void;
 };
 
 const PALETTE = [
@@ -39,6 +44,8 @@ export default function NodeInspector({
   onUpdateColor,
   onHeight,
   onSelectNode,
+  onUpdateShape,
+  onUpdateEdge,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [measuredH, setMeasuredH] = useState(0);
@@ -78,6 +85,23 @@ export default function NodeInspector({
   const clearColor = () => {
     if (!node) return;
     onUpdateColor(node.id, undefined);
+  };
+
+  const setShape = (shape: NodeShape) => {
+    if (!node) return;
+    onUpdateShape?.(node.id, shape);
+  };
+
+  const setEdgeStyle = (style: EdgeStyle) => {
+    if (!node) return;
+    onUpdateEdge?.(node.id, { style });
+  };
+
+  const bumpEdgeWidth = (delta: number) => {
+    if (!node) return;
+    const cur = typeof node.edgeToParent?.width === "number" ? node.edgeToParent.width : 2;
+    const next = Math.max(1, Math.min(10, cur + delta));
+    onUpdateEdge?.(node.id, { width: next });
   };
 
   const closeWithAnim = () => {
@@ -234,9 +258,86 @@ export default function NodeInspector({
         </View>
       </View>
 
-      <View style={s.futureBox}>
-        <Text style={s.futureTitle}>Future settings</Text>
-        <Text style={s.futureText}>Placeholders for node options</Text>
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Appearance</Text>
+
+        <View style={s.row}>
+          <Text style={s.label}>Shape</Text>
+          <View style={s.pills}>
+            {([
+              { k: "circle", t: "Circle" },
+              { k: "rounded", t: "Rounded" },
+              { k: "capsule", t: "Capsule" },
+            ] as const).map((it) => {
+              const active = (node.shape ?? "circle") === it.k;
+              return (
+                <Pressable
+                  key={it.k}
+                  onPress={() => setShape(it.k)}
+                  style={({ pressed }) => [
+                    s.pill,
+                    active && s.pillActive,
+                    pressed && s.pressed,
+                  ]}
+                >
+                  <Text style={[s.pillText, active && s.pillTextActive]}>
+                    {it.t}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={s.row}>
+          <Text style={s.label}>Line</Text>
+          <View style={s.pills}>
+            {([
+              { k: "solid", t: "Solid" },
+              { k: "dashed", t: "Dashed" },
+            ] as const).map((it) => {
+              const active = (node.edgeToParent?.style ?? "solid") === it.k;
+              return (
+                <Pressable
+                  key={it.k}
+                  onPress={() => setEdgeStyle(it.k)}
+                  style={({ pressed }) => [
+                    s.pill,
+                    active && s.pillActive,
+                    pressed && s.pressed,
+                  ]}
+                >
+                  <Text style={[s.pillText, active && s.pillTextActive]}>
+                    {it.t}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={s.row}>
+          <Text style={s.label}>Width</Text>
+          <View style={s.stepper}>
+            <Pressable
+              onPress={() => bumpEdgeWidth(-1)}
+              style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}
+            >
+              <Text style={s.stepText}>−</Text>
+            </Pressable>
+
+            <Text style={s.stepValue}>
+              {typeof node.edgeToParent?.width === "number" ? node.edgeToParent.width : 2}
+            </Text>
+
+            <Pressable
+              onPress={() => bumpEdgeWidth(1)}
+              style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}
+            >
+              <Text style={s.stepText}>＋</Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
     </Animated.View>
   );
@@ -362,7 +463,7 @@ const s = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
-  futureBox: {
+  section: {
     marginTop: 10,
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -370,16 +471,66 @@ const s = StyleSheet.create({
     borderRadius: 14,
     padding: 12,
   },
-  futureTitle: {
+  sectionTitle: {
     fontSize: 13,
     fontWeight: "800",
     color: "#111827",
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  futureText: {
+  pills: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+  },
+  pill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  pillActive: {
+    borderColor: "#111827",
+  },
+  pillText: {
     fontSize: 12,
-    color: "#64748b",
-    fontWeight: "600",
+    fontWeight: "800",
+    color: "#374151",
+  },
+  pillTextActive: {
+    color: "#111827",
+  },
+  stepper: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stepBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepText: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#111827",
+    marginTop: -1,
+  },
+  stepValue: {
+    minWidth: 24,
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#111827",
   },
   pressed: {
     opacity: 0.7,

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { PanResponder } from "react-native";
-import { Circle, Text as SvgText, G } from "react-native-svg";
-import { MindMapNode } from "../types/map";
+import { Circle, Rect, Text as SvgText, G } from "react-native-svg";
+import { MindMapNode, NodeShape } from "../types/map";
 import * as Haptics from "expo-haptics";
 
 type Props = {
@@ -9,6 +9,7 @@ type Props = {
   isRoot?: boolean;
   selected?: boolean;
   scale?: number;
+  shape?: NodeShape;
   onSelect: (nodeId: string) => void;
   onMoveTo: (nodeId: string, x: number, y: number) => void;
   onDragStart?: () => void;
@@ -20,6 +21,7 @@ export default function EditableNodeView({
   isRoot = false,
   selected = false,
   scale = 1,
+  shape = "circle",
   onSelect,
   onMoveTo,
   onDragStart,
@@ -118,20 +120,51 @@ export default function EditableNodeView({
   const fillDefault = isRoot ? "#38bdf8" : "#e5e7eb";
   const fill = node.color ?? fillDefault;
 
+  const textPaddingX = 10;
+  const fontSize = isRoot ? 14 : 12;
+  const approxCharW = fontSize * 0.6;
+  const textW = Math.max(24, (node.title ?? "").length * approxCharW);
+
+  const wBase = Math.max(baseR * 2, textW + textPaddingX * 2);
+  const hBase = baseR * 2;
+
+  const w = isDragging ? wBase * 1.4 : wBase;
+  const h = isDragging ? hBase * 1.4 : hBase;
+
+  const x0 = node.x - w / 2;
+  const y0 = node.y - h / 2;
+
+  const rx = shape === "capsule" ? h / 2 : 14;
+  const ry = rx;
+
   return (
     <G {...panResponder.panHandlers}>
-      <Circle
-        cx={node.x}
-        cy={node.y}
-        r={r}
-        fill={fill}
-        stroke={selected ? "#0ea5e9" : "transparent"}
-        strokeWidth={selected ? 8 : 0}
-      />
+      {shape === "circle" ? (
+        <Circle
+          cx={node.x}
+          cy={node.y}
+          r={r}
+          fill={fill}
+          stroke={selected ? "#0ea5e9" : "transparent"}
+          strokeWidth={selected ? 8 : 0}
+        />
+      ) : (
+        <Rect
+          x={x0}
+          y={y0}
+          width={w}
+          height={h}
+          rx={rx}
+          ry={ry}
+          fill={fill}
+          stroke={selected ? "#0ea5e9" : "transparent"}
+          strokeWidth={selected ? 8 : 0}
+        />
+      )}
       <SvgText
         x={node.x}
         y={node.y + 4}
-        fontSize={isRoot ? 14 : 12}
+        fontSize={fontSize}
         fill="#111827"
         textAnchor="middle"
       >
