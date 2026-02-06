@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
   Keyboard,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -36,6 +37,9 @@ type MapMeta = {
 export default function MyMapsIndex() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
 
   const [items, setItems] = useState<MapMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,6 +174,8 @@ export default function MyMapsIndex() {
     return [...items].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }, [items]);
 
+  const numColumns = isLandscape ? 2 : 1;
+
   const runPendingExport = useCallback(() => {
     const id = pendingExportId;
     const kind = pendingExportKind;
@@ -199,11 +205,14 @@ export default function MyMapsIndex() {
       </View>
 
       <FlatList
-        contentContainerStyle={s.listContent}
+        key={`mymaps-${numColumns}`}
+        contentContainerStyle={[s.listContent, isLandscape && s.listContentLandscape]}
         data={sortedItems}
         keyExtractor={(it) => it.id}
         refreshing={loading}
         onRefresh={reload}
+        numColumns={numColumns}
+        columnWrapperStyle={isLandscape ? s.columns : undefined}
         ListEmptyComponent={
           !loading ? (
             <View style={s.empty}>
@@ -215,7 +224,7 @@ export default function MyMapsIndex() {
         renderItem={({ item }) => (
           <Pressable
             onPress={() => openMap(item.id)}
-            style={({ pressed }) => [s.card, pressed && s.pressed]}
+            style={({ pressed }) => [s.card, isLandscape && s.cardLandscape, pressed && s.pressed]}
           >
             <View style={s.cardTop}>
               <Pressable
@@ -366,12 +375,19 @@ const s = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: "800", color: "#0f172a" },
   listContent: { padding: 16, paddingBottom: 24, gap: 12 },
+  listContentLandscape: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 24 },
+  columns: { gap: 12 },
   card: {
+    flex: 1,
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
     borderRadius: 14,
     padding: 14,
+  },
+  cardLandscape: {
+    // keeps cards visually balanced in 2 columns
+    minHeight: 118,
   },
   pressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   cardTop: {

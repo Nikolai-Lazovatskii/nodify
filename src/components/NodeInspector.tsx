@@ -7,6 +7,8 @@ import {
   StyleSheet,
   Animated,
   PanResponder,
+  ScrollView,
+  Platform,
 } from "react-native";
 import { MindMapNode, NodeShape, EdgeStyle } from "../types/map";
 
@@ -18,6 +20,8 @@ type Props = {
   onUpdateColor: (nodeId: string, color: string | undefined) => void;
   onHeight: (h: number) => void;
   onSelectNode: (nodeId: string) => void;
+  sideWidth?: number;
+  mode?: "sheet" | "side";
   onUpdateShape?: (nodeId: string, shape: NodeShape | undefined) => void;
   onUpdateEdge?: (
     nodeId: string,
@@ -46,7 +50,13 @@ export default function NodeInspector({
   onSelectNode,
   onUpdateShape,
   onUpdateEdge,
+  mode,
+  sideWidth,
 }: Props) {
+  const panelMode = mode ?? "sheet";
+  const isSide = panelMode === "side";
+  const panelW = sideWidth ?? 320;
+
   const [draft, setDraft] = useState("");
   const [measuredH, setMeasuredH] = useState(0);
 
@@ -105,6 +115,10 @@ export default function NodeInspector({
   };
 
   const closeWithAnim = () => {
+    if (isSide) {
+      onClose();
+      return;
+    }
     const to = measuredH > 0 ? measuredH : 320;
     Animated.timing(translateY, {
       toValue: to,
@@ -130,17 +144,23 @@ export default function NodeInspector({
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4,
+      onMoveShouldSetPanResponder: (_, g) => {
+        if (isSide) return false;
+        return Math.abs(g.dy) > 4;
+      },
       onPanResponderGrant: () => {
+        if (isSide) return;
         translateY.stopAnimation((v) => {
           lastY.current = typeof v === "number" ? v : 0;
         });
       },
       onPanResponderMove: (_, g) => {
+        if (isSide) return;
         const next = Math.max(0, lastY.current + g.dy);
         translateY.setValue(next);
       },
       onPanResponderRelease: (_, g) => {
+        if (isSide) return;
         const dragged = lastY.current + g.dy;
         const shouldClose =
           (measuredH > 0 && dragged > measuredH * 0.28) ||
@@ -151,6 +171,7 @@ export default function NodeInspector({
         else snapBack();
       },
       onPanResponderTerminate: () => {
+        if (isSide) return;
         snapBack();
       },
     })
@@ -160,185 +181,261 @@ export default function NodeInspector({
 
   return (
     <Animated.View
-      style={[s.sheet, { transform: [{ translateY }] }]}
+      style={
+        isSide
+          ? [s.side, { width: panelW }]
+          : [s.sheet, { transform: [{ translateY }] }]
+      }
+      pointerEvents="auto"
       onLayout={(e) => {
-        const h = e.nativeEvent.layout.height;
-        setMeasuredH(h);
-        onHeight(h);
+        if (!isSide) {
+          const h = e.nativeEvent.layout.height;
+          setMeasuredH(h);
+          onHeight(h);
+        } else {
+          onHeight(0);
+        }
       }}
-      {...panResponder.panHandlers}
+      {...(isSide ? {} : panResponder.panHandlers)}
     >
-      <View style={s.header}>
-        <View style={s.grabber} />
+      <View style={s.header} pointerEvents="box-none">
+        {!isSide && <View style={s.grabber} />}
         <Pressable
           onPress={closeWithAnim}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           style={({ pressed }) => [s.close, pressed && s.pressed]}
         >
           <Text style={s.closeText}>Close</Text>
         </Pressable>
       </View>
 
-      <Text style={s.title}>Node</Text>
+      {isSide ? (
+        <ScrollView
+          style={s.body}
+          contentContainerStyle={s.bodyContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
+          pointerEvents="auto"
+        >
+          <Text style={s.title}>Node</Text>
 
-      <View style={s.row}>
-        <Text style={s.label}>Name</Text>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          onBlur={submit}
-          onSubmitEditing={submit}
-          style={s.input}
-          placeholder="Node title"
-          returnKeyType="done"
-        />
-      </View>
+          <View style={s.row}>
+            <Text style={s.label}>Name</Text>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              onBlur={submit}
+              onSubmitEditing={submit}
+              style={s.input}
+              placeholder="Node title"
+              returnKeyType="done"
+            />
+          </View>
 
-      <View style={s.row}>
-        <Text style={s.label}>Color</Text>
-        <View style={s.paletteWrap}>
-          {PALETTE.map((c) => {
-            const active = (node.color ?? "") === c;
-            return (
-              <Pressable
-                key={c}
-                onPress={() => selectColor(c)}
-                style={({ pressed }) => [
-                  s.swatch,
-                  { backgroundColor: c },
-                  active && s.swatchActive,
-                  pressed && s.pressed,
-                ]}
-              />
-            );
-          })}
-          <Pressable
-            onPress={clearColor}
-            style={({ pressed }) => [s.clearBtn, pressed && s.pressed]}
-          >
-            <Text style={s.clearText}>Default</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={s.row}>
-        <Text style={s.label}>ID</Text>
-        <Text style={s.value}>{node.id}</Text>
-      </View>
-
-      <View style={s.row}>
-        <Text style={s.label}>Parent</Text>
-        {parent ? (
-          <Pressable
-            onPress={() => onSelectNode(parent.id)}
-            style={({ pressed }) => [s.link, pressed && s.pressed]}
-          >
-            <Text style={s.linkText}>{parent.title}</Text>
-          </Pressable>
-        ) : (
-          <Text style={s.value}>—</Text>
-        )}
-      </View>
-
-      <View style={[s.row, { alignItems: "flex-start" }]}>
-        <Text style={s.label}>Children</Text>
-        <View style={s.childrenCol}>
-          {children.length === 0 ? (
-            <Text style={s.value}>—</Text>
-          ) : (
-            children.map((c) => (
-              <Pressable
-                key={c.id}
-                onPress={() => onSelectNode(c.id)}
-                style={({ pressed }) => [s.link, pressed && s.pressed]}
-              >
-                <Text style={s.linkText}>{c.title}</Text>
+          <View style={s.row}>
+            <Text style={s.label}>Color</Text>
+            <View style={s.paletteWrap}>
+              {PALETTE.map((c) => {
+                const active = (node.color ?? "") === c;
+                return (
+                  <Pressable
+                    key={c}
+                    onPress={() => selectColor(c)}
+                    style={({ pressed }) => [
+                      s.swatch,
+                      { backgroundColor: c },
+                      active && s.swatchActive,
+                      pressed && s.pressed,
+                    ]}
+                  />
+                );
+              })}
+              <Pressable onPress={clearColor} style={({ pressed }) => [s.clearBtn, pressed && s.pressed]}>
+                <Text style={s.clearText}>Default</Text>
               </Pressable>
-            ))
-          )}
-        </View>
-      </View>
+            </View>
+          </View>
 
-      <View style={s.section}>
-        <Text style={s.sectionTitle}>Appearance</Text>
+          <View style={s.row}>
+            <Text style={s.label}>Parent</Text>
+            {parent ? (
+              <Pressable onPress={() => onSelectNode(parent.id)} style={({ pressed }) => [s.link, pressed && s.pressed]}>
+                <Text style={s.linkText}>{parent.title}</Text>
+              </Pressable>
+            ) : (
+              <Text style={s.value}>—</Text>
+            )}
+          </View>
 
-        <View style={s.row}>
-          <Text style={s.label}>Shape</Text>
-          <View style={s.pills}>
-            {([
-              { k: "circle", t: "Circle" },
-              { k: "rounded", t: "Rounded" },
-              { k: "capsule", t: "Capsule" },
-            ] as const).map((it) => {
-              const active = (node.shape ?? "circle") === it.k;
-              return (
-                <Pressable
-                  key={it.k}
-                  onPress={() => setShape(it.k)}
-                  style={({ pressed }) => [
-                    s.pill,
-                    active && s.pillActive,
-                    pressed && s.pressed,
-                  ]}
-                >
-                  <Text style={[s.pillText, active && s.pillTextActive]}>
-                    {it.t}
-                  </Text>
+          <View style={[s.row, { alignItems: "flex-start" }]}>
+            <Text style={s.label}>Children</Text>
+            <View style={s.childrenCol}>
+              {children.length === 0 ? (
+                <Text style={s.value}>—</Text>
+              ) : (
+                children.map((c) => (
+                  <Pressable key={c.id} onPress={() => onSelectNode(c.id)} style={({ pressed }) => [s.link, pressed && s.pressed]}>
+                    <Text style={s.linkText}>{c.title}</Text>
+                  </Pressable>
+                ))
+              )}
+            </View>
+          </View>
+
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Appearance</Text>
+
+            <View style={s.row}>
+              <Text style={s.label}>Shape</Text>
+              <View style={s.pills}>
+                {([
+                  { k: "circle", t: "Circle" },
+                  { k: "rounded", t: "Rounded" },
+                  { k: "capsule", t: "Capsule" },
+                ] as const).map((it) => {
+                  const active = (node.shape ?? "circle") === it.k;
+                  return (
+                    <Pressable key={it.k} onPress={() => setShape(it.k)} style={({ pressed }) => [s.pill, active && s.pillActive, pressed && s.pressed]}>
+                      <Text style={[s.pillText, active && s.pillTextActive]}>{it.t}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={s.row}>
+              <Text style={s.label}>Line</Text>
+              <View style={s.pills}>
+                {([
+                  { k: "solid", t: "Solid" },
+                  { k: "dashed", t: "Dashed" },
+                ] as const).map((it) => {
+                  const active = (node.edgeToParent?.style ?? "solid") === it.k;
+                  return (
+                    <Pressable key={it.k} onPress={() => setEdgeStyle(it.k)} style={({ pressed }) => [s.pill, active && s.pillActive, pressed && s.pressed]}>
+                      <Text style={[s.pillText, active && s.pillTextActive]}>{it.t}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={s.row}>
+              <Text style={s.label}>Width</Text>
+              <View style={s.stepper}>
+                <Pressable onPress={() => bumpEdgeWidth(-1)} style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}>
+                  <Text style={s.stepText}>−</Text>
                 </Pressable>
-              );
-            })}
-          </View>
-        </View>
 
-        <View style={s.row}>
-          <Text style={s.label}>Line</Text>
-          <View style={s.pills}>
-            {([
-              { k: "solid", t: "Solid" },
-              { k: "dashed", t: "Dashed" },
-            ] as const).map((it) => {
-              const active = (node.edgeToParent?.style ?? "solid") === it.k;
-              return (
-                <Pressable
-                  key={it.k}
-                  onPress={() => setEdgeStyle(it.k)}
-                  style={({ pressed }) => [
-                    s.pill,
-                    active && s.pillActive,
-                    pressed && s.pressed,
-                  ]}
-                >
-                  <Text style={[s.pillText, active && s.pillTextActive]}>
-                    {it.t}
-                  </Text>
+                <Text style={s.stepValue}>
+                  {typeof node.edgeToParent?.width === "number" ? node.edgeToParent.width : 2}
+                </Text>
+
+                <Pressable onPress={() => bumpEdgeWidth(1)} style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}>
+                  <Text style={s.stepText}>＋</Text>
                 </Pressable>
-              );
-            })}
+              </View>
+            </View>
           </View>
-        </View>
+        </ScrollView>
+      ) : (
+        <>
+          <Text style={s.title}>Node</Text>
 
-        <View style={s.row}>
-          <Text style={s.label}>Width</Text>
-          <View style={s.stepper}>
-            <Pressable
-              onPress={() => bumpEdgeWidth(-1)}
-              style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}
-            >
-              <Text style={s.stepText}>−</Text>
-            </Pressable>
-
-            <Text style={s.stepValue}>
-              {typeof node.edgeToParent?.width === "number" ? node.edgeToParent.width : 2}
-            </Text>
-
-            <Pressable
-              onPress={() => bumpEdgeWidth(1)}
-              style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}
-            >
-              <Text style={s.stepText}>＋</Text>
-            </Pressable>
+          <View style={s.row}>
+            <Text style={s.label}>Name</Text>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              onBlur={submit}
+              onSubmitEditing={submit}
+              style={s.input}
+              placeholder="Node title"
+              returnKeyType="done"
+            />
           </View>
-        </View>
-      </View>
+
+          <View style={s.row}>
+            <Text style={s.label}>Color</Text>
+            <View style={s.paletteWrap}>
+              {PALETTE.map((c) => {
+                const active = (node.color ?? "") === c;
+                return (
+                  <Pressable
+                    key={c}
+                    onPress={() => selectColor(c)}
+                    style={({ pressed }) => [
+                      s.swatch,
+                      { backgroundColor: c },
+                      active && s.swatchActive,
+                      pressed && s.pressed,
+                    ]}
+                  />
+                );
+              })}
+              <Pressable onPress={clearColor} style={({ pressed }) => [s.clearBtn, pressed && s.pressed]}>
+                <Text style={s.clearText}>Default</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Appearance</Text>
+
+            <View style={s.row}>
+              <Text style={s.label}>Shape</Text>
+              <View style={s.pills}>
+                {([
+                  { k: "circle", t: "Circle" },
+                  { k: "rounded", t: "Rounded" },
+                  { k: "capsule", t: "Capsule" },
+                ] as const).map((it) => {
+                  const active = (node.shape ?? "circle") === it.k;
+                  return (
+                    <Pressable key={it.k} onPress={() => setShape(it.k)} style={({ pressed }) => [s.pill, active && s.pillActive, pressed && s.pressed]}>
+                      <Text style={[s.pillText, active && s.pillTextActive]}>{it.t}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={s.row}>
+              <Text style={s.label}>Line</Text>
+              <View style={s.pills}>
+                {([
+                  { k: "solid", t: "Solid" },
+                  { k: "dashed", t: "Dashed" },
+                ] as const).map((it) => {
+                  const active = (node.edgeToParent?.style ?? "solid") === it.k;
+                  return (
+                    <Pressable key={it.k} onPress={() => setEdgeStyle(it.k)} style={({ pressed }) => [s.pill, active && s.pillActive, pressed && s.pressed]}>
+                      <Text style={[s.pillText, active && s.pillTextActive]}>{it.t}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={s.row}>
+              <Text style={s.label}>Width</Text>
+              <View style={s.stepper}>
+                <Pressable onPress={() => bumpEdgeWidth(-1)} style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}>
+                  <Text style={s.stepText}>−</Text>
+                </Pressable>
+
+                <Text style={s.stepValue}>
+                  {typeof node.edgeToParent?.width === "number" ? node.edgeToParent.width : 2}
+                </Text>
+
+                <Pressable onPress={() => bumpEdgeWidth(1)} style={({ pressed }) => [s.stepBtn, pressed && s.pressed]}>
+                  <Text style={s.stepText}>＋</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </>
+      )}
     </Animated.View>
   );
 }
@@ -360,10 +457,28 @@ const s = StyleSheet.create({
     shadowRadius: 18,
     elevation: 10,
   },
+  side: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 18,
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 18,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    zIndex: 999,
+    elevation: 999,
+  },
   header: {
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 6,
+    zIndex: 2,
   },
   grabber: {
     width: 44,
@@ -376,9 +491,10 @@ const s = StyleSheet.create({
     position: "absolute",
     right: 0,
     top: 0,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 10,
+    zIndex: 3,
   },
   closeText: {
     color: "#0ea5e9",
@@ -535,5 +651,10 @@ const s = StyleSheet.create({
   pressed: {
     opacity: 0.7,
   },
+  body: {
+    flex: 1,
+  },
+  bodyContent: {
+    paddingBottom: 12,
+  },
 });
-

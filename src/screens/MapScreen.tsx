@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { View, Pressable, StyleSheet, Text } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { View, Pressable, StyleSheet, Text, useWindowDimensions } from "react-native";
 import Svg from "react-native-svg";
 
 import { MindMap, MindMapNode, EdgeStyle, NodeShape } from "../types/map";
@@ -16,6 +16,30 @@ type Props = {
 };
 
 export default function MapScreen({ initialMap, onMapChange }: Props) {
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  const isLandscape = screenW > screenH;
+
+  const [canvasKey, setCanvasKey] = useState(0);
+  const lastOrientation = useRef(isLandscape);
+  const didMount = useRef(false);
+
+  useEffect(() => {
+    if (!didMount.current) {
+      didMount.current = true;
+      setCanvasKey((k) => k + 1);
+      lastOrientation.current = isLandscape;
+      return;
+    }
+
+    if (lastOrientation.current !== isLandscape) {
+      lastOrientation.current = isLandscape;
+      setCanvasKey((k) => k + 1);
+    }
+  }, [isLandscape]);
+
+  const WORLD_W = isLandscape ? 1800 : 1200;
+  const WORLD_H = isLandscape ? 1200 : 1800;
+  const VIEWBOX = `${-WORLD_W / 2} ${-WORLD_H / 2} ${WORLD_W} ${WORLD_H}`;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorH, setInspectorH] = useState(0);
   const [draggingNode, setDraggingNode] = useState(false);
@@ -56,12 +80,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
   const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
 
-  const bottomInset = selectedNode ? Math.max(inspectorH, 220) : 0;
-
-  const WORLD_W = 1200;
-  const WORLD_H = 1800;
-  const VIEWBOX = `${-WORLD_W / 2} ${-WORLD_H / 2} ${WORLD_W} ${WORLD_H}`;
-
+  const bottomInset = !isLandscape && selectedNode ? Math.max(inspectorH, 220) : 0;
   const updateTitle = (nodeId: string, newTitle: string) => {
     applyMap((prev) => ({
       ...prev,
@@ -209,9 +228,10 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={{ flex: 1, marginTop: 12, overflow: "hidden" }}>
-        <View style={{ flex: 1, marginBottom: bottomInset }}>
+      <View style={{ flex: 1, marginTop: 12, overflow: "hidden", flexDirection: isLandscape ? "row" : "column" }}>
+        <View style={{ flex: 1, marginBottom: isLandscape ? 0 : bottomInset, alignItems: "center", justifyContent: "center" }}>
           <ZoomableCanvas
+            key={`canvas:${map.id}:${canvasKey}`}
             enabled={!draggingNode}
             minScale={0.25}
             maxScale={40}
@@ -255,24 +275,32 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
           {selectedNode && (
             <Pressable
               onPress={addChildToSelected}
-              style={({ pressed }) => [ui.addButton, pressed && ui.pressed]}
+              style={({ pressed }) => [
+                ui.addButton,
+                isLandscape && ui.addButtonLandscape,
+                pressed && ui.pressed,
+              ]}
             >
               <Text style={ui.addButtonText}>＋</Text>
             </Pressable>
           )}
         </View>
 
-        <NodeInspector
-          node={selectedNode}
-          nodes={map.nodes}
-          onClose={() => setSelectedId(null)}
-          onUpdateTitle={updateTitle}
-          onUpdateColor={updateColor}
-          onUpdateShape={updateShape}
-          onUpdateEdge={updateEdge}
-          onHeight={setInspectorH}
-          onSelectNode={setSelectedId}
-        />
+        {selectedNode && (
+          <NodeInspector
+            mode={isLandscape ? "side" : "sheet"}
+            sideWidth={340}
+            node={selectedNode}
+            nodes={map.nodes}
+            onClose={() => setSelectedId(null)}
+            onUpdateTitle={updateTitle}
+            onUpdateColor={updateColor}
+            onUpdateShape={updateShape}
+            onUpdateEdge={updateEdge}
+            onHeight={isLandscape ? (() => {}) : setInspectorH}
+            onSelectNode={setSelectedId}
+          />
+        )}
       </View>
     </View>
   );
@@ -293,6 +321,10 @@ const ui = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 6,
+  },
+  addButtonLandscape: {
+    left: 12,
+    right: undefined,
   },
   addButtonText: {
     color: "#ffffff",

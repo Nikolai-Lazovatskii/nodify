@@ -1,5 +1,5 @@
 import React from "react";
-import { View, StyleSheet, Pressable, Image } from "react-native";
+import { View, StyleSheet, Pressable, Image, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
@@ -7,12 +7,14 @@ import { ThemedView } from "@/components/themed-view";
 
 export default function Index() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, isLandscape && styles.containerLandscape]}>
       <Image
         source={require("@/assets/Nodify2.png")}
-        style={styles.logo}
+        style={[styles.logo, isLandscape && styles.logoLandscape]}
         resizeMode="contain"
       />
 
@@ -22,16 +24,16 @@ export default function Index() {
 
       <ThemedText style={styles.subtitle}>Mind mapping made simple</ThemedText>
 
-      <View style={styles.buttons}>
+      <View style={[styles.buttons, isLandscape && styles.buttonsLandscape]}>
         <Pressable
-          style={styles.primaryButton}
+          style={[styles.primaryButton, isLandscape && styles.buttonLandscape]}
           onPress={() => router.push("/(tabs)/create")}
         >
           <ThemedText style={styles.primaryText}>Create new mind map</ThemedText>
         </Pressable>
 
         <Pressable
-          style={styles.secondaryButton}
+          style={[styles.secondaryButton, isLandscape && styles.buttonLandscape]}
           onPress={() => router.push("/(tabs)/myMaps")}
         >
           <ThemedText style={styles.secondaryText}>My mind maps</ThemedText>
@@ -45,7 +47,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: "center",
-    padding: 24,
+    padding: 20,
   },
   logo: {
     width: 110,
@@ -60,14 +62,14 @@ const styles = StyleSheet.create({
   subtitle: {
     textAlign: "center",
     opacity: 0.7,
-    marginBottom: 32,
+    marginBottom: 24,
   },
   buttons: {
-    gap: 16,
+    gap: 12,
   },
   primaryButton: {
     backgroundColor: "#38bdf8",
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
   },
@@ -78,11 +80,28 @@ const styles = StyleSheet.create({
   secondaryButton: {
     borderWidth: 1,
     borderColor: "#9ca3af",
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
   },
   secondaryText: {
     color: "#374151",
+  },
+  containerLandscape: {
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  logoLandscape: {
+    width: 80,
+    height: 80,
+    marginBottom: 10,
+  },
+  buttonsLandscape: {
+    gap: 10,
+  },
+  buttonLandscape: {
+    paddingVertical: 10,
+    borderRadius: 10,
   },
 });

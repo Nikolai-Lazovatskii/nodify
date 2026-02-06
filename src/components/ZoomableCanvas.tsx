@@ -1,4 +1,4 @@
-import React, { PropsWithChildren, useCallback, useState } from "react";
+import React, { PropsWithChildren, useCallback, useEffect, useRef, useState } from "react";
 import { LayoutChangeEvent, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -24,6 +24,9 @@ export default function ZoomableCanvas({
 }: Props) {
   const [size, setSize] = useState({ w: 1, h: 1 });
 
+  const prevSize = useRef<{ w: number; h: number } | null>(null);
+  const didInitLayout = useRef(false);
+
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -39,7 +42,26 @@ export default function ZoomableCanvas({
 
   const onLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
-    if (width > 0 && height > 0) setSize({ w: width, h: height });
+    if (width <= 0 || height <= 0) return;
+
+    const next = { w: width, h: height };
+
+    const prev = prevSize.current;
+    prevSize.current = next;
+    setSize(next);
+
+    if (!didInitLayout.current) {
+      didInitLayout.current = true;
+      return;
+    }
+
+    if (!prev) return;
+
+    const dx = (next.w - prev.w) / 2;
+    const dy = (next.h - prev.h) / 2;
+
+    tx.value = tx.value + dx;
+    ty.value = ty.value + dy;
   };
 
   const pan = Gesture.Pan()
@@ -65,13 +87,17 @@ export default function ZoomableCanvas({
       if (next < minScale) next = minScale;
       if (next > maxScale) next = maxScale;
 
-      const fx = e.focalX - size.w / 2;
-      const fy = e.focalY - size.h / 2;
+      const cx = size.w / 2;
+      const cy = size.h / 2;
 
-      const k = next / startScale.value;
+      const fx = e.focalX;
+      const fy = e.focalY;
 
-      tx.value = startTx.value + fx - fx * k;
-      ty.value = startTy.value + fy - fy * k;
+      const s0 = startScale.value;
+      const s1 = next;
+
+      tx.value = startTx.value + (1 - s1 / s0) * (fx - cx);
+      ty.value = startTy.value + (1 - s1 / s0) * (fy - cy);
 
       scale.value = next;
 
@@ -95,9 +121,9 @@ export default function ZoomableCanvas({
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
-      { scale: scale.value },
       { translateX: tx.value },
       { translateY: ty.value },
+      { scale: scale.value },
     ],
   }));
 
