@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/src/auth/AuthProvider";
 import { getMyProfile, upsertMyUsername } from "@/src/storage/profileRepo";
 
 export default function AccountScreen() {
-  const { user, signOut, changePassword } = useAuth();
+  const { user, loading, signOut, changePassword } = useAuth();
 
-  const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   const [username, setUsername] = useState("");
   const [savingUsername, setSavingUsername] = useState(false);
@@ -20,16 +20,34 @@ export default function AccountScreen() {
     if (!user) return;
     (async () => {
       try {
-        setLoading(true);
+        setProfileLoading(true);
         const p = await getMyProfile();
         setUsername(p?.username ?? "");
       } catch (e: any) {
         Alert.alert("Profile error", e?.message ?? "Failed to load profile");
       } finally {
-        setLoading(false);
+        setProfileLoading(false);
       }
     })();
-  }, [user]);
+  }, [user?.id]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (loading) return;
+      if (!user) router.replace("/(auth)/login");
+    }, [loading, user])
+  );
+
+  if (loading) {
+    return (
+      <View style={[s.root, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator />
+        <Text style={{ marginTop: 10, color: "#64748b", fontWeight: "700" }}>Loading session…</Text>
+      </View>
+    );
+  }
+
+  if (!user) return null;
 
   const onSaveUsername = async () => {
     try {
@@ -74,16 +92,6 @@ export default function AccountScreen() {
     router.replace("/(auth)/login");
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      if (!user) {
-        router.replace("/(auth)/login");
-      }
-    }, [user])
-  );
-
-  if (!user) return null;
-
   return (
     <View style={s.root}>
       <Text style={s.h1}>Account</Text>
@@ -102,12 +110,19 @@ export default function AccountScreen() {
           autoCapitalize="none"
           style={s.input}
         />
+
         <Pressable
           onPress={onSaveUsername}
-          disabled={savingUsername || loading}
-          style={({ pressed }) => [s.btn, pressed && s.pressed, (savingUsername || loading) && s.disabled]}
+          disabled={savingUsername || profileLoading}
+          style={({ pressed }) => [
+            s.btn,
+            pressed && s.pressed,
+            (savingUsername || profileLoading) && s.disabled,
+          ]}
         >
-          <Text style={s.btnText}>{savingUsername ? "..." : "Save username"}</Text>
+          <Text style={s.btnText}>
+            {savingUsername ? "..." : profileLoading ? "Loading..." : "Save username"}
+          </Text>
         </Pressable>
       </View>
 

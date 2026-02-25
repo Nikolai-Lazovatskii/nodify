@@ -5,12 +5,22 @@ import { useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { useAuth } from "@/src/auth/AuthProvider";
 
 export default function Index() {
   const router = useRouter();
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const insets = useSafeAreaInsets();
+
+  const { user, loading } = useAuth();
+
+  const goAccount = () => {
+    // While session is restoring, do nothing to avoid redirect glitches
+    if (loading) return;
+    if (user) router.push("/(tabs)/account" as any);
+    else router.push("/(auth)/login" as any);
+  };
 
   return (
     <ThemedView style={[styles.container, isLandscape && styles.containerLandscape]}>
@@ -20,9 +30,9 @@ export default function Index() {
           { top: (isLandscape ? 8 : 12) + insets.top, left: 12 + insets.left },
           pressed && styles.pressed,
         ]}
-        onPress={() => router.push("/(auth)/login" as any)}
+        onPress={goAccount}
       >
-        <ThemedText style={styles.accountText}>Account</ThemedText>
+        <ThemedText style={styles.accountText}>{loading ? "..." : user ? "Profile" : "Login"}</ThemedText>
       </Pressable>
 
       <View style={styles.content}>

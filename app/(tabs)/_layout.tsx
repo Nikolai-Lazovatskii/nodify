@@ -28,7 +28,7 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="myMaps"
+        name="myMaps/index"
         options={{
           title: "My maps",
           tabBarIcon: ({ color }) => (
@@ -37,7 +37,6 @@ export default function TabLayout() {
         }}
       />
 
-      {/* скрытые экраны (не должны появляться в таб-баре) */}
       <Tabs.Screen name="create" options={{ href: null }} />
       <Tabs.Screen name="myMaps/[id]" options={{ href: null }} />
       <Tabs.Screen name="account" options={{ href: null }} />
