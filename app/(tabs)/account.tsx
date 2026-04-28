@@ -1,11 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
 import { getMyProfile, upsertMyUsername } from "@/src/storage/profileRepo";
 
 export default function AccountScreen() {
   const { user, loading, signOut, changePassword } = useAuth();
+  const { t } = useTranslation();
+  const colorScheme = useColorScheme() ?? "light";
+  const isDark = colorScheme === "dark";
+  const userId = user?.id ?? null;
 
   const [profileLoading, setProfileLoading] = useState(false);
 
@@ -17,19 +23,19 @@ export default function AccountScreen() {
   const [savingPass, setSavingPass] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     (async () => {
       try {
         setProfileLoading(true);
         const p = await getMyProfile();
         setUsername(p?.username ?? "");
       } catch (e: any) {
-        Alert.alert("Profile error", e?.message ?? "Failed to load profile");
+        Alert.alert(t("account.profileError"), e?.message ?? t("account.failedLoadProfile"));
       } finally {
         setProfileLoading(false);
       }
     })();
-  }, [user?.id]);
+  }, [t, userId]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -40,9 +46,9 @@ export default function AccountScreen() {
 
   if (loading) {
     return (
-      <View style={[s.root, { justifyContent: "center", alignItems: "center" }]}>
+      <View style={[s.root, isDark && s.rootDark, { justifyContent: "center", alignItems: "center" }]}>
         <ActivityIndicator />
-        <Text style={{ marginTop: 10, color: "#64748b", fontWeight: "700" }}>Loading session…</Text>
+        <Text style={{ marginTop: 10, color: isDark ? "#94a3b8" : "#64748b", fontWeight: "700" }}>{t("account.loadingSession")}</Text>
       </View>
     );
   }
@@ -53,9 +59,9 @@ export default function AccountScreen() {
     try {
       setSavingUsername(true);
       await upsertMyUsername(username);
-      Alert.alert("Saved", "Username updated");
+      Alert.alert(t("account.saved"), t("account.usernameUpdated"));
     } catch (e: any) {
-      Alert.alert("Save error", e?.message ?? "Failed to save username");
+      Alert.alert(t("account.saveError"), e?.message ?? t("account.failedSaveUsername"));
     } finally {
       setSavingUsername(false);
     }
@@ -66,11 +72,11 @@ export default function AccountScreen() {
     const b = newPass2.trim();
 
     if (a.length < 6) {
-      Alert.alert("Password", "Minimum 6 characters");
+      Alert.alert(t("account.password"), t("account.min6"));
       return;
     }
     if (a !== b) {
-      Alert.alert("Password", "Passwords do not match");
+      Alert.alert(t("account.password"), t("account.passwordsMismatch"));
       return;
     }
 
@@ -79,9 +85,9 @@ export default function AccountScreen() {
       await changePassword(a);
       setNewPass("");
       setNewPass2("");
-      Alert.alert("Done", "Password updated");
+      Alert.alert(t("common.done"), t("account.passwordUpdated"));
     } catch (e: any) {
-      Alert.alert("Password error", e?.message ?? "Failed to update password");
+      Alert.alert(t("account.passwordError"), e?.message ?? t("account.failedUpdatePassword"));
     } finally {
       setSavingPass(false);
     }
@@ -93,22 +99,23 @@ export default function AccountScreen() {
   };
 
   return (
-    <View style={s.root}>
-      <Text style={s.h1}>Account</Text>
+    <View style={[s.root, isDark && s.rootDark]}>
+      <Text style={[s.h1, isDark && s.h1Dark]}>{t("account.title")}</Text>
 
-      <View style={s.card}>
-        <Text style={s.label}>Email</Text>
-        <Text style={s.value}>{user.email ?? "—"}</Text>
+      <View style={[s.card, isDark && s.cardDark]}>
+        <Text style={[s.label, isDark && s.labelDark]}>{t("account.email")}</Text>
+        <Text style={[s.value, isDark && s.valueDark]}>{user.email ?? "—"}</Text>
       </View>
 
-      <View style={s.card}>
-        <Text style={s.label}>Username</Text>
+      <View style={[s.card, isDark && s.cardDark]}>
+        <Text style={[s.label, isDark && s.labelDark]}>{t("account.username")}</Text>
         <TextInput
           value={username}
           onChangeText={setUsername}
-          placeholder="Your username"
+          placeholder={t("account.yourUsername")}
+          placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
           autoCapitalize="none"
-          style={s.input}
+          style={[s.input, isDark && s.inputDark]}
         />
 
         <Pressable
@@ -121,27 +128,29 @@ export default function AccountScreen() {
           ]}
         >
           <Text style={s.btnText}>
-            {savingUsername ? "..." : profileLoading ? "Loading..." : "Save username"}
+            {savingUsername ? "..." : profileLoading ? t("common.loading") : t("account.saveUsername")}
           </Text>
         </Pressable>
       </View>
 
-      <View style={s.card}>
-        <Text style={s.label}>Change password</Text>
+      <View style={[s.card, isDark && s.cardDark]}>
+        <Text style={[s.label, isDark && s.labelDark]}>{t("account.changePassword")}</Text>
 
         <TextInput
           value={newPass}
           onChangeText={setNewPass}
-          placeholder="New password"
+          placeholder={t("account.newPassword")}
           secureTextEntry
-          style={s.input}
+          placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+          style={[s.input, isDark && s.inputDark]}
         />
         <TextInput
           value={newPass2}
           onChangeText={setNewPass2}
-          placeholder="Repeat new password"
+          placeholder={t("account.repeatNewPassword")}
           secureTextEntry
-          style={s.input}
+          placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+          style={[s.input, isDark && s.inputDark]}
         />
 
         <Pressable
@@ -149,12 +158,12 @@ export default function AccountScreen() {
           disabled={savingPass}
           style={({ pressed }) => [s.btn, pressed && s.pressed, savingPass && s.disabled]}
         >
-          <Text style={s.btnText}>{savingPass ? "..." : "Update password"}</Text>
+          <Text style={s.btnText}>{savingPass ? "..." : t("account.updatePassword")}</Text>
         </Pressable>
       </View>
 
-      <Pressable onPress={onLogout} style={({ pressed }) => [s.logout, pressed && s.pressed]}>
-        <Text style={s.logoutText}>Log out</Text>
+      <Pressable onPress={onLogout} style={({ pressed }) => [s.logout, isDark && s.logoutDark, pressed && s.pressed]}>
+        <Text style={s.logoutText}>{t("account.logOut")}</Text>
       </Pressable>
     </View>
   );
@@ -162,7 +171,9 @@ export default function AccountScreen() {
 
 const s = StyleSheet.create({
   root: { flex: 1, padding: 16, paddingTop: 36, gap: 12, backgroundColor: "#fff" },
+  rootDark: { backgroundColor: "#0f172a" },
   h1: { fontSize: 24, fontWeight: "900", color: "#111827", marginBottom: 4 },
+  h1Dark: { color: "#f8fafc" },
   card: {
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -171,8 +182,11 @@ const s = StyleSheet.create({
     gap: 10,
     backgroundColor: "#f8fafc",
   },
+  cardDark: { borderColor: "#334155", backgroundColor: "#111827" },
   label: { color: "#64748b", fontWeight: "800", fontSize: 12 },
+  labelDark: { color: "#94a3b8" },
   value: { color: "#111827", fontWeight: "800", fontSize: 14 },
+  valueDark: { color: "#f8fafc" },
   input: {
     height: 44,
     borderWidth: 1,
@@ -180,7 +194,9 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     backgroundColor: "#fff",
+    color: "#111827",
   },
+  inputDark: { borderColor: "#334155", backgroundColor: "#0b1220", color: "#f8fafc" },
   btn: {
     height: 44,
     borderRadius: 12,
@@ -199,6 +215,7 @@ const s = StyleSheet.create({
     backgroundColor: "#fff",
     marginTop: 8,
   },
+  logoutDark: { borderColor: "#f87171", backgroundColor: "#111827" },
   logoutText: { color: "#ef4444", fontWeight: "900" },
   pressed: { opacity: 0.85 },
   disabled: { opacity: 0.6 },

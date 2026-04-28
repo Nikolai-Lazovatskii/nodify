@@ -1,10 +1,12 @@
 import React, { useCallback, useRef } from "react";
 import { View, ActivityIndicator, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
+import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { createMap } from "@/src/storage/mapsRepo";
 
 export default function CreateTab() {
   const router = useRouter();
+  const { t } = useTranslation();
   const runningRef = useRef(false);
 
   useFocusEffect(
@@ -16,7 +18,7 @@ export default function CreateTab() {
 
       (async () => {
         try {
-          const map = await createMap("New mind map");
+          const map = await createMap(t("create.newMindMap"), t("create.root"));
           if (cancelled) return;
 
           router.replace({
@@ -25,7 +27,7 @@ export default function CreateTab() {
           });
         } catch (e: any) {
           if (cancelled) return;
-          Alert.alert("Create failed", e?.message ?? "Unknown error");
+          Alert.alert(t("create.createFailed"), e?.message ?? t("create.unknownError"));
         } finally {
           runningRef.current = false;
         }
@@ -34,7 +36,7 @@ export default function CreateTab() {
       return () => {
         cancelled = true;
       };
-    }, [router])
+    }, [router, t])
   );
 
   return (

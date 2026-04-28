@@ -5,9 +5,15 @@ export function exportToMm(map: MindMap): string {
     throw new Error("Root node not found");
   }
 
+  const rawMapAttrs = map.importedFormat?.vendor?.mm?.rawMapAttributes ?? {};
+  const mapAttrs: Record<string, string> = { ...rawMapAttrs };
+  if (!("version" in mapAttrs) && !("VERSION" in mapAttrs)) {
+    mapAttrs.version = "1.0.1";
+  }
+
   const lines: string[] = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
-  lines.push('<map version="1.0.1">');
+  lines.push(`<map ${serializeAttrs(mapAttrs)}>`);
 
   lines.push(serializeNode(map, map.rootId, 1, new Set()));
 
@@ -89,23 +95,122 @@ function pickTextColorForBg(bgHex: string): string {
   return L < 0.5 ? "#FFFFFF" : "#111827";
 }
 
+function serializeAttrs(attrs: Record<string, string | undefined>): string {
+  return Object.entries(attrs)
+    .filter(([, value]) => typeof value === "string")
+    .map(([key, value]) => `${key}="${escapeXml(value ?? "")}"`)
+    .join(" ");
+}
 
 function buildNodeAttrs(node: MindMapNode): string {
-  const text = escapeXml(node.title ?? "");
-  const id = escapeXml(node.id);
+  const rawAttrs = node.vendor?.mm?.rawAttributes ?? {};
+  const attrs: Record<string, string | undefined> = {
+    ...rawAttrs,
+    TEXT: node.title ?? "",
+    ID: node.id,
+  };
 
-  const attrs: string[] = [];
-  attrs.push(`TEXT="${text}"`);
-  attrs.push(`ID="${id}"`);
-
-  if (node.color) {
-    const bg = normalizeToHex(node.color) ?? node.color;
-    attrs.push(`BACKGROUND_COLOR="${escapeXml(bg)}"`);
-    const textColor = pickTextColorForBg(bg);
-    attrs.push(`COLOR="${escapeXml(textColor)}"`);
+  if (node.collapsed === true) {
+    attrs.FOLDED = "true";
+  } else if (node.collapsed === false) {
+    delete attrs.FOLDED;
   }
 
-  return attrs.join(" ");
+  if (typeof node.color !== "undefined") {
+    const bg = normalizeToHex(node.color) ?? node.color;
+    attrs.BACKGROUND_COLOR = bg;
+    const textColor = pickTextColorForBg(bg);
+    attrs.COLOR = textColor;
+  }
+
+  if (node.shape === "rounded") {
+    attrs.STYLE = "bubble";
+  } else if (node.shape === "capsule") {
+    attrs.STYLE = "fork";
+  } else if (!rawAttrs.STYLE) {
+    delete attrs.STYLE;
+  }
+
+  return serializeAttrs(attrs);
+}
+
+function buildParentEdgeAttrs(node: MindMapNode): string | null {
+  if (!node.parentId) {
+    return null;
+  }
+
+  const rawEdgeAttrs = node.vendor?.mm?.rawEdgeAttributes ?? {};
+  const attrs: Record<string, string | undefined> = {
+    ...rawEdgeAttrs,
+  };
+
+  if (node.edgeToParent) {
+    attrs.STYLE = node.edgeToParent.style === "dashed" ? "bezier" : "linear";
+    attrs.WIDTH = `${Math.max(1, node.edgeToParent.width ?? 2)}`;
+    if (typeof node.edgeToParent.color !== "undefined") {
+      attrs.COLOR = normalizeToHex(node.edgeToParent.color) ?? node.edgeToParent.color;
+    }
+  }
+
+  const serialized = serializeAttrs(attrs);
+  return serialized ? serialized : null;
+}
+
+function buildArrowLinkAttrs(
+  map: MindMap,
+  node: MindMapNode
+): Record<string, string | undefined>[] {
+  const outgoing = map.edges.filter(
+    (edge) => edge.fromId === node.id && edge.toId !== node.id && !!map.nodes[edge.toId]
+  );
+
+  return outgoing.map((edge) => {
+    const rawArrowAttrs = edge.vendor?.mm?.rawArrowlinkAttributes ?? {};
+    const attrs: Record<string, string | undefined> = {
+      ...rawArrowAttrs,
+      ID: rawArrowAttrs.ID || edge.id,
+      DESTINATION: edge.toId,
+    };
+
+    if (edge.style) {
+      attrs.STYLE = edge.style === "dashed" ? "bezier" : "linear";
+    } else if (!rawArrowAttrs.STYLE) {
+      delete attrs.STYLE;
+    }
+
+    if (edge.width && Number.isFinite(edge.width)) {
+      attrs.WIDTH = `${Math.max(1, edge.width)}`;
+    } else if (!rawArrowAttrs.WIDTH) {
+      delete attrs.WIDTH;
+    }
+
+    if (edge.color) {
+      attrs.COLOR = normalizeToHex(edge.color) ?? edge.color;
+    } else if (!rawArrowAttrs.COLOR) {
+      delete attrs.COLOR;
+    }
+
+    return attrs;
+  });
+}
+
+function serializeRichContent(indent: string, note: string): string {
+  const escaped = escapeXml(note).replace(/\n/g, "<br/>");
+  return [
+    `${indent}<richcontent TYPE="NOTE">`,
+    `${indent}  <html>`,
+    `${indent}    <body>${escaped}</body>`,
+    `${indent}  </html>`,
+    `${indent}</richcontent>`,
+  ].join("\n");
+}
+
+function serializeAttributes(indent: string, tags: string[]): string[] {
+  if (tags.length === 0) {
+    return [];
+  }
+
+  return tags.map((tag) => `${indent}<attribute NAME="tag" VALUE="${escapeXml(tag)}" />`);
 }
 
 function serializeNode(
@@ -123,15 +228,48 @@ function serializeNode(
 
   const indent = "  ".repeat(depth);
   const attrs = buildNodeAttrs(node);
+  const parentEdgeAttrs = buildParentEdgeAttrs(node);
+  const arrowLinks = buildArrowLinkAttrs(map, node);
+  const rawChildElements = node.vendor?.mm?.rawChildElements ?? [];
 
-  const children = (node.children ?? []).filter((cid) => !!map.nodes[cid]);
+  const detachedFromRoot =
+    node.id === map.rootId
+      ? Object.values(map.nodes)
+          .filter((candidate) => candidate.parentId === null && candidate.id !== map.rootId)
+          .map((candidate) => candidate.id)
+      : [];
+  const children = [...(node.children ?? []), ...detachedFromRoot]
+    .filter((cid, index, arr) => arr.indexOf(cid) === index)
+    .filter((cid) => !!map.nodes[cid]);
+  const hasNote = !!node.note?.trim();
+  const tags = node.tags?.filter(Boolean) ?? [];
+  const hasExtraContent =
+    hasNote ||
+    tags.length > 0 ||
+    !!parentEdgeAttrs ||
+    arrowLinks.length > 0 ||
+    rawChildElements.length > 0;
 
-  if (children.length === 0) {
+  if (children.length === 0 && !hasExtraContent) {
     return `${indent}<node ${attrs} />`;
   }
 
   const lines: string[] = [];
   lines.push(`${indent}<node ${attrs}>`);
+
+  if (parentEdgeAttrs) {
+    lines.push(`${indent}  <edge ${parentEdgeAttrs} />`);
+  }
+
+  if (hasNote) {
+    lines.push(serializeRichContent(`${indent}  `, node.note!.trim()));
+  }
+
+  lines.push(...serializeAttributes(`${indent}  `, tags));
+  lines.push(
+    ...arrowLinks.map((arrowAttrs) => `${indent}  <arrowlink ${serializeAttrs(arrowAttrs)} />`)
+  );
+  lines.push(...rawChildElements.map((rawXml) => `${indent}  ${rawXml}`));
 
   for (const cid of children) {
     lines.push(serializeNode(map, cid, depth + 1, nextVisited));

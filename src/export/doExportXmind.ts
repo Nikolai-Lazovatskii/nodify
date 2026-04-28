@@ -15,7 +15,7 @@ function safeFileName(name: string) {
     .slice(0, 60);
 }
 
-export async function exportXmind(map: MindMap): Promise<void> {
+export async function exportXmind(map: MindMap, dialogTitle = "Export XMind"): Promise<void> {
   const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
   if (!baseDir) {
     throw new Error("FileSystem cache/document directory is not available");
@@ -26,9 +26,11 @@ export async function exportXmind(map: MindMap): Promise<void> {
 
   // 2) Assemble .xmind (zip container)
   const zip = new JSZip();
+  const rawManifest = map.importedFormat?.vendor?.xmind?.rawManifest;
+  const rawMetadata = map.importedFormat?.vendor?.xmind?.rawMetadata;
   zip.file("content.json", contentJson);
-  zip.file("manifest.json", JSON.stringify(manifestJson, null, 2));
-  zip.file("metadata.json", JSON.stringify(metadataJson, null, 2));
+  zip.file("manifest.json", JSON.stringify(rawManifest ?? manifestJson, null, 2));
+  zip.file("metadata.json", JSON.stringify(rawMetadata ?? metadataJson, null, 2));
 
   const zipBase64 = await zip.generateAsync({ type: "base64" });
 
@@ -50,6 +52,6 @@ export async function exportXmind(map: MindMap): Promise<void> {
   await Sharing.shareAsync(outUri, {
     mimeType: "application/octet-stream",
     UTI: "com.xmind.xmind",
-    dialogTitle: "Export XMind",
+    dialogTitle,
   });
 }

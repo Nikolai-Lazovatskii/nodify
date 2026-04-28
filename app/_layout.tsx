@@ -1,3 +1,4 @@
+/* eslint-disable import/no-duplicates */
 import "react-native-gesture-handler";
 import "react-native-reanimated";
 
@@ -9,13 +10,26 @@ import { StatusBar } from "expo-status-bar";
 
 import { AuthProvider } from "@/src/auth/AuthProvider";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { LanguagePreferenceProvider, useTranslation } from "@/src/i18n/LanguagePreference";
+import { ThemePreferenceProvider } from "@/src/theme/ThemePreference";
 
 export const unstable_settings = {
   anchor: "(tabs)",
 };
 
 export default function RootLayout() {
+  return (
+    <ThemePreferenceProvider>
+      <LanguagePreferenceProvider>
+        <RootLayoutInner />
+      </LanguagePreferenceProvider>
+    </ThemePreferenceProvider>
+  );
+}
+
+function RootLayoutInner() {
   const colorScheme = useColorScheme();
+  const { t } = useTranslation();
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -24,9 +38,9 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="(auth)" />
-            <Stack.Screen name="modal" options={{ presentation: "modal", title: "Modal" }} />
+            <Stack.Screen name="modal" options={{ presentation: "modal", title: t("tabs.modal") }} />
           </Stack>
-          <StatusBar style="auto" />
+          <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
         </ThemeProvider>
       </AuthProvider>
     </GestureHandlerRootView>

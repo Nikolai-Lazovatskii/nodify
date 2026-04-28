@@ -5,7 +5,7 @@ export default {
     name: "Nodify",
     slug: "Nodify",
     version: "1.0.0",
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "nodify",
     userInterfaceStyle: "automatic",
@@ -15,6 +15,7 @@ export default {
       bundleIdentifier: "com.anonymous.Nodify",
     },
     android: {
+      package: "com.nicolasray.nodify",
       adaptiveIcon: {
         backgroundColor: "#E6F4FE",
         foregroundImage: "./assets/images/android-icon-foreground.png",
@@ -48,6 +49,9 @@ export default {
     extra: {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+      eas: {
+        projectId: "48fb9245-fc4f-4978-a833-6fc1c4910641",
+      },
     },
   },
 };

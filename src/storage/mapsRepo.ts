@@ -14,7 +14,7 @@ export type MapMeta = {
 const INDEX_KEY = "nodify:maps:index:v1";
 const DOC_KEY = (id: string) => `nodify:maps:doc:v1:${id}`;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function safeParse<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -79,7 +79,7 @@ export async function listMaps(): Promise<MapMeta[]> {
   return items.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function createMap(title = "New mind map"): Promise<MindMap> {
+export async function createMap(title = "New mind map", rootTitle = "Root"): Promise<MindMap> {
   const userId = await getUserId();
   const now = Date.now();
 
@@ -89,8 +89,9 @@ export async function createMap(title = "New mind map"): Promise<MindMap> {
     id,
     title,
     rootId: "root",
+    edges: [],
     nodes: {
-      root: { id: "root", parentId: null, title: "Root", x: 0, y: 0, children: [] },
+      root: { id: "root", parentId: null, title: rootTitle, x: 0, y: 0, children: [] },
     },
   };
 
@@ -206,8 +207,8 @@ export async function renameMap(id: string, title: string): Promise<void> {
   await saveMap({ ...map, title });
 }
 
-export async function exportMapXmind(id: string): Promise<void> {
+export async function exportMapXmind(id: string, dialogTitle?: string): Promise<void> {
   const map = await getMap(id);
   if (!map) throw new Error("Map not found");
-  await exportXmind(map);
+  await exportXmind(map, dialogTitle);
 }

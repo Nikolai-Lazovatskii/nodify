@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import { syncMapsOnce } from "../storage/syncMaps";
 
 type AuthState = {
   session: Session | null;
@@ -18,6 +19,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const syncingRef = useRef(false);
+
+  const runSync = async () => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    try {
+      await syncMapsOnce();
+    } catch {
+      // ignore (offline / RLS / transient)
+    } finally {
+      syncingRef.current = false;
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -27,13 +42,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
       } else {
         setSession(data.session ?? null);
+        if (data.session) {
+          void runSync();
+        }
       }
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       setSession(nextSession ?? null);
       setLoading(false);
+
+      if (nextSession) {
+        void runSync();
+      }
     });
 
     return () => {

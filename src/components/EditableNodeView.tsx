@@ -1,175 +1,312 @@
-import React, { useEffect, useRef, useState } from "react";
-import { PanResponder } from "react-native";
-import { Circle, Rect, Text as SvgText, G } from "react-native-svg";
-import { MindMapNode, NodeShape } from "../types/map";
+import React, { memo, useEffect, useMemo, useRef } from "react";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import * as Haptics from "expo-haptics";
+import { MaterialIcons } from "@expo/vector-icons";
+
+import { MindMapNode, NodeShape } from "../types/map";
 
 type Props = {
   node: MindMapNode;
+  worldWidth: number;
+  worldHeight: number;
   isRoot?: boolean;
   selected?: boolean;
-  scale?: number;
   shape?: NodeShape;
+  placementMode?: boolean;
   onSelect: (nodeId: string) => void;
-  onMoveTo: (nodeId: string, x: number, y: number) => void;
-  onDragStart?: () => void;
-  onDragEnd?: () => void;
+  linkMode?: boolean;
+  onSelectLinkTarget?: (nodeId: string) => void;
+  onStartReposition?: (nodeId: string) => void;
 };
 
-export default function EditableNodeView({
+function EditableNodeView({
   node,
+  worldWidth,
+  worldHeight,
   isRoot = false,
   selected = false,
-  scale = 1,
   shape = "circle",
+  placementMode = false,
   onSelect,
-  onMoveTo,
-  onDragStart,
-  onDragEnd,
+  linkMode = false,
+  onSelectLinkTarget,
+  onStartReposition,
 }: Props) {
-  const [isDragging, setIsDragging] = useState(false);
-
-  const nodeIdRef = useRef(node.id);
-  const scaleRef = useRef(scale || 1);
-  const startPos = useRef({ x: node.x, y: node.y });
-
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const draggingRef = useRef(false);
+  const shake = useRef(new Animated.Value(0)).current;
+  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
-    nodeIdRef.current = node.id;
-  }, [node.id]);
+    if (!placementMode) {
+      animationRef.current?.stop();
+      shake.setValue(0);
+      return;
+    }
 
-  useEffect(() => {
-    scaleRef.current = scale || 1;
-  }, [scale]);
+    animationRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shake, {
+          toValue: 1,
+          duration: 70,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shake, {
+          toValue: -1,
+          duration: 70,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shake, {
+          toValue: 0,
+          duration: 70,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    animationRef.current.start();
 
-  useEffect(() => {
     return () => {
-      if (pressTimer.current) clearTimeout(pressTimer.current);
+      animationRef.current?.stop();
+      shake.setValue(0);
     };
-  }, []);
+  }, [placementMode, shake]);
 
-  const LONG_PRESS_MS = 220;
+  const handlePress = () => {
+    if (placementMode) {
+      return;
+    }
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) =>
-        draggingRef.current || Math.abs(g.dx) + Math.abs(g.dy) > 2,
+    if (linkMode && onSelectLinkTarget) {
+      onSelectLinkTarget(node.id);
+      return;
+    }
 
-      onPanResponderGrant: () => {
-        draggingRef.current = false;
+    onSelect(node.id);
+  };
 
-        if (pressTimer.current) clearTimeout(pressTimer.current);
-        pressTimer.current = setTimeout(() => {
-          draggingRef.current = true;
-          startPos.current = { x: node.x, y: node.y };
+  const handleLongPress = () => {
+    if (linkMode || placementMode || !onStartReposition) {
+      return;
+    }
 
-          setIsDragging(true);
-          onDragStart?.();
+    onStartReposition(node.id);
+    Promise.resolve(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)).catch(() => {});
+  };
 
-          Promise.resolve(
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-          ).catch(() => {});
-        }, LONG_PRESS_MS);
-      },
-
-      onPanResponderMove: (_, g) => {
-        if (!draggingRef.current) return;
-
-        const k = scaleRef.current || 1;
-        onMoveTo(
-          nodeIdRef.current,
-          startPos.current.x + g.dx / k,
-          startPos.current.y + g.dy / k
-        );
-      },
-
-      onPanResponderRelease: () => {
-        if (pressTimer.current) clearTimeout(pressTimer.current);
-        pressTimer.current = null;
-
-        if (draggingRef.current) {
-          setIsDragging(false);
-          onDragEnd?.();
-        } else {
-          onSelect(nodeIdRef.current);
-        }
-
-        draggingRef.current = false;
-      },
-
-      onPanResponderTerminate: () => {
-        if (pressTimer.current) clearTimeout(pressTimer.current);
-        pressTimer.current = null;
-
-        if (draggingRef.current) {
-          setIsDragging(false);
-          onDragEnd?.();
-        }
-
-        draggingRef.current = false;
-      },
-    })
-  ).current;
-
-  const baseR = isRoot ? 26 : 20;
-  const r = isDragging ? baseR * 1.4 : baseR;
-
-  const fillDefault = isRoot ? "#38bdf8" : "#e5e7eb";
-  const fill = node.color ?? fillDefault;
-
-  const textPaddingX = 10;
-  const fontSize = isRoot ? 14 : 12;
+  const baseR = Math.max(isRoot ? 42 : 30, node.size ?? (isRoot ? 42 : 30));
+  const fontSize = Math.max(12, Math.round(baseR * (isRoot ? 0.45 : 0.38)));
+  const textPaddingX = isRoot ? 22 : 18;
   const approxCharW = fontSize * 0.6;
   const textW = Math.max(24, (node.title ?? "").length * approxCharW);
+  const hasMeta = !!node.note || !!node.dueAt || (node.attachments ?? []).length > 0 || (node.tags ?? []).length > 0;
+  const width = Math.max(baseR * (isRoot ? 2.8 : 2.65), textW + textPaddingX * 2, hasMeta ? 112 : 0);
+  const height = baseR * (hasMeta ? 2.35 : 2.1);
+  const left = worldWidth / 2 + node.x - width / 2;
+  const top = worldHeight / 2 + node.y - height / 2;
+  const fillDefault = isRoot ? "#0ea5e9" : "#ffffff";
+  const fill = node.color ?? fillDefault;
+  const isCircle = shape === "circle";
+  const hasCollapsedChildren = !!node.collapsed && node.children.length > 0;
+  const attachmentCount = node.attachments?.length ?? 0;
+  const textColor = isRoot && !node.color ? "#ffffff" : "#0f172a";
 
-  const wBase = Math.max(baseR * 2, textW + textPaddingX * 2);
-  const hBase = baseR * 2;
-
-  const w = isDragging ? wBase * 1.4 : wBase;
-  const h = isDragging ? hBase * 1.4 : hBase;
-
-  const x0 = node.x - w / 2;
-  const y0 = node.y - h / 2;
-
-  const rx = shape === "capsule" ? h / 2 : 14;
-  const ry = rx;
+  const animatedStyle = useMemo(
+    () => ({
+      transform: placementMode
+        ? [
+            {
+              rotate: shake.interpolate({
+                inputRange: [-1, 0, 1],
+                outputRange: ["-2deg", "0deg", "2deg"],
+              }),
+            },
+            {
+              translateX: shake.interpolate({
+                inputRange: [-1, 0, 1],
+                outputRange: [-1.5, 0, 1.5],
+              }),
+            },
+            { scale: 1.04 },
+          ]
+        : [{ scale: selected ? 1.02 : 1 }],
+    }),
+    [placementMode, selected, shake]
+  );
 
   return (
-    <G {...panResponder.panHandlers}>
-      {shape === "circle" ? (
-        <Circle
-          cx={node.x}
-          cy={node.y}
-          r={r}
-          fill={fill}
-          stroke={selected ? "#0ea5e9" : "transparent"}
-          strokeWidth={selected ? 8 : 0}
-        />
-      ) : (
-        <Rect
-          x={x0}
-          y={y0}
-          width={w}
-          height={h}
-          rx={rx}
-          ry={ry}
-          fill={fill}
-          stroke={selected ? "#0ea5e9" : "transparent"}
-          strokeWidth={selected ? 8 : 0}
-        />
-      )}
-      <SvgText
-        x={node.x}
-        y={node.y + 4}
-        fontSize={fontSize}
-        fill="#111827"
-        textAnchor="middle"
+    <Animated.View
+      style={[
+        styles.wrapper,
+        animatedStyle,
+        {
+          left,
+          top,
+          width,
+          height,
+          zIndex: placementMode ? 40 : selected ? 20 : 10,
+        },
+      ]}
+    >
+      <Pressable
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={240}
+        style={({ pressed }) => [
+          styles.nodeBase,
+          isCircle ? styles.circle : styles.rounded,
+          shape === "capsule" ? { borderRadius: height / 2 } : null,
+          isRoot && styles.rootNode,
+          selected && styles.selectedNode,
+          {
+            width,
+            height,
+            backgroundColor: fill,
+            borderColor: placementMode ? "#f59e0b" : selected ? "#0284c7" : "rgba(255,255,255,0.78)",
+            opacity: pressed && !placementMode ? 0.9 : 1,
+          },
+        ]}
       >
-        {node.title}
-      </SvgText>
-    </G>
+        <Text numberOfLines={1} style={[styles.label, { fontSize, color: textColor }]}>
+          {node.title}
+        </Text>
+        {hasMeta ? (
+          <View style={styles.metaRow}>
+            {node.dueAt ? (
+              <View style={[styles.metaPill, isRoot && styles.metaPillRoot]}>
+                <MaterialIcons name="event" size={11} color={isRoot ? "#e0f2fe" : "#0369a1"} />
+              </View>
+            ) : null}
+            {attachmentCount > 0 ? (
+              <View style={[styles.metaPill, isRoot && styles.metaPillRoot]}>
+                <MaterialIcons name="attach-file" size={11} color={isRoot ? "#e0f2fe" : "#0369a1"} />
+                <Text style={[styles.metaText, isRoot && styles.metaTextRoot]}>{attachmentCount}</Text>
+              </View>
+            ) : null}
+            {node.note ? (
+              <View style={[styles.metaPill, isRoot && styles.metaPillRoot]}>
+                <MaterialIcons name="notes" size={11} color={isRoot ? "#e0f2fe" : "#0369a1"} />
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </Pressable>
+
+      {hasCollapsedChildren ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>+</Text>
+        </View>
+      ) : null}
+    </Animated.View>
   );
 }
+
+export default memo(EditableNodeView, (prev, next) => {
+  return (
+    prev.node === next.node &&
+    prev.worldWidth === next.worldWidth &&
+    prev.worldHeight === next.worldHeight &&
+    prev.isRoot === next.isRoot &&
+    prev.selected === next.selected &&
+    prev.shape === next.shape &&
+    prev.placementMode === next.placementMode &&
+    prev.linkMode === next.linkMode &&
+    prev.onSelect === next.onSelect &&
+    prev.onSelectLinkTarget === next.onSelectLinkTarget &&
+    prev.onStartReposition === next.onStartReposition
+  );
+});
+
+const styles = StyleSheet.create({
+  wrapper: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nodeBase: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    paddingHorizontal: 14,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  rootNode: {
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  selectedNode: {
+    shadowColor: "#0284c7",
+    shadowOpacity: 0.3,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  circle: {
+    borderRadius: 999,
+  },
+  rounded: {
+    borderRadius: 18,
+  },
+  label: {
+    fontWeight: "800",
+    textAlign: "center",
+    includeFontPadding: false,
+    letterSpacing: 0,
+  },
+  metaRow: {
+    position: "absolute",
+    bottom: 8,
+    flexDirection: "row",
+    gap: 4,
+  },
+  metaPill: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: "rgba(224,242,254,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 1,
+  },
+  metaPillRoot: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  metaText: {
+    color: "#0369a1",
+    fontSize: 9,
+    fontWeight: "900",
+  },
+  metaTextRoot: {
+    color: "#e0f2fe",
+  },
+  badge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#0f172a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    lineHeight: 10,
+    fontWeight: "700",
+  },
+});

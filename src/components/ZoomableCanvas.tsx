@@ -1,5 +1,12 @@
-import React, { PropsWithChildren, useCallback, useEffect, useRef, useState } from "react";
-import { LayoutChangeEvent, StyleSheet, View } from "react-native";
+import React, {
+  forwardRef,
+  PropsWithChildren,
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
+import { LayoutChangeEvent, Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -13,20 +20,49 @@ type Props = PropsWithChildren<{
   minScale?: number;
   maxScale?: number;
   onScaleChange?: (s: number) => void;
+  onDoubleTap?: () => void;
+  onTapPoint?: (x: number, y: number) => void;
+  tapEnabled?: boolean;
+  onZoomGestureStart?: () => void;
+  onZoomGestureEnd?: () => void;
+  contentWidth?: number;
+  contentHeight?: number;
 }>;
 
-export default function ZoomableCanvas({
+export type ZoomableCanvasHandle = {
+  centerOn: (
+    x: number,
+    y: number,
+    nextScale?: number,
+    screenOffsetX?: number,
+    screenOffsetY?: number
+  ) => void;
+  reset: () => void;
+  localToWorld: (localX: number, localY: number) => { x: number; y: number };
+};
+
+const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function ZoomableCanvas({
   children,
   enabled = true,
   minScale = 0.25,
   maxScale = 40,
   onScaleChange,
-}: Props) {
+  onDoubleTap,
+  onTapPoint,
+  tapEnabled = false,
+  onZoomGestureStart,
+  onZoomGestureEnd,
+  contentWidth,
+  contentHeight,
+}, ref) {
   const [size, setSize] = useState({ w: 1, h: 1 });
+  const sizeRef = useRef({ w: 1, h: 1 });
+  const transformRef = useRef({ tx: 0, ty: 0, scale: 1 });
 
-  const prevSize = useRef<{ w: number; h: number } | null>(null);
-  const didInitLayout = useRef(false);
-
+  const sizeW = useSharedValue(1);
+  const sizeH = useSharedValue(1);
+  const contentW = useSharedValue(contentWidth ?? 1);
+  const contentH = useSharedValue(contentHeight ?? 1);
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -40,50 +76,127 @@ export default function ZoomableCanvas({
     [onScaleChange]
   );
 
+  const setTransformJS = useCallback((nextTx: number, nextTy: number, nextScale: number) => {
+    transformRef.current = { tx: nextTx, ty: nextTy, scale: nextScale };
+  }, []);
+
+  const clampOffsets = (
+    nextTx: number,
+    nextTy: number,
+    nextScale: number
+  ): { tx: number; ty: number } => {
+    "worklet";
+    const travelPaddingX = Math.max(sizeW.value * 0.55, contentW.value * 0.12, 220);
+    const travelPaddingY = Math.max(sizeH.value * 0.55, contentH.value * 0.12, 220);
+    const maxOffsetX = Math.max(0, (contentW.value * nextScale - sizeW.value) / 2) + travelPaddingX;
+    const maxOffsetY = Math.max(0, (contentH.value * nextScale - sizeH.value) / 2) + travelPaddingY;
+
+    return {
+      tx: Math.max(-maxOffsetX, Math.min(maxOffsetX, nextTx)),
+      ty: Math.max(-maxOffsetY, Math.min(maxOffsetY, nextTy)),
+    };
+  };
+
+  const animateTo = useCallback(
+    (x: number, y: number, nextScale = 1) => {
+      const clampedScale = Math.max(minScale, Math.min(maxScale, nextScale));
+      const travelPaddingX = Math.max(size.w * 0.55, (contentWidth ?? size.w) * 0.12, 220);
+      const travelPaddingY = Math.max(size.h * 0.55, (contentHeight ?? size.h) * 0.12, 220);
+      const maxOffsetX =
+        Math.max(0, (((contentWidth ?? size.w) * clampedScale) - size.w) / 2) + travelPaddingX;
+      const maxOffsetY =
+        Math.max(0, (((contentHeight ?? size.h) * clampedScale) - size.h) / 2) + travelPaddingY;
+      const clampedOffsets = {
+        tx: Math.max(-maxOffsetX, Math.min(maxOffsetX, -x * clampedScale)),
+        ty: Math.max(-maxOffsetY, Math.min(maxOffsetY, -y * clampedScale)),
+      };
+      setTransformJS(clampedOffsets.tx, clampedOffsets.ty, clampedScale);
+      tx.value = withTiming(clampedOffsets.tx, { duration: 220 });
+      ty.value = withTiming(clampedOffsets.ty, { duration: 220 });
+      scale.value = withTiming(clampedScale, { duration: 220 });
+      onScaleChange?.(clampedScale);
+    },
+    [contentHeight, contentWidth, maxScale, minScale, onScaleChange, scale, setTransformJS, size.h, size.w, tx, ty]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      centerOn: (x: number, y: number, nextScale = 1, screenOffsetX = 0, screenOffsetY = 0) => {
+        const clampedScale = Math.max(minScale, Math.min(maxScale, nextScale));
+        const worldOffsetX = screenOffsetX / clampedScale;
+        const worldOffsetY = screenOffsetY / clampedScale;
+        animateTo(x + worldOffsetX, y + worldOffsetY, clampedScale);
+      },
+      reset: () => {
+        animateTo(0, 0, 1);
+      },
+      localToWorld: (localX: number, localY: number) => {
+        const safeScale = transformRef.current.scale || 1;
+        return {
+          x: (localX - sizeRef.current.w / 2 - transformRef.current.tx) / safeScale,
+          y: (localY - sizeRef.current.h / 2 - transformRef.current.ty) / safeScale,
+        };
+      },
+    }),
+    [animateTo, maxScale, minScale]
+  );
+
   const onLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     if (width <= 0 || height <= 0) return;
-
-    const next = { w: width, h: height };
-
-    const prev = prevSize.current;
-    prevSize.current = next;
-    setSize(next);
-
-    if (!didInitLayout.current) {
-      didInitLayout.current = true;
-      return;
-    }
-
-    if (!prev) return;
-
-    const dx = (next.w - prev.w) / 2;
-    const dy = (next.h - prev.h) / 2;
-
-    tx.value = tx.value + dx;
-    ty.value = ty.value + dy;
+    setSize({ w: width, h: height });
+    sizeRef.current = { w: width, h: height };
+    sizeW.value = width;
+    sizeH.value = height;
   };
+
+  contentW.value = contentWidth ?? size.w;
+  contentH.value = contentHeight ?? size.h;
 
   const pan = Gesture.Pan()
     .enabled(enabled)
+    .minDistance(3)
+    .maxPointers(1)
+    .averageTouches(true)
+    .shouldCancelWhenOutside(false)
     .onBegin(() => {
       startTx.value = tx.value;
       startTy.value = ty.value;
     })
     .onUpdate((e) => {
-      tx.value = startTx.value + e.translationX;
-      ty.value = startTy.value + e.translationY;
+      const movementFactor = 0.82;
+      tx.value = startTx.value + e.translationX * movementFactor;
+      ty.value = startTy.value + e.translationY * movementFactor;
+      runOnJS(setTransformJS)(tx.value, ty.value, scale.value);
+    })
+    .onEnd(() => {
+      const clamped = clampOffsets(tx.value, ty.value, scale.value);
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value);
+      tx.value = withTiming(clamped.tx, { duration: 180 });
+      ty.value = withTiming(clamped.ty, { duration: 180 });
+    })
+    .onFinalize(() => {
+      const clamped = clampOffsets(tx.value, ty.value, scale.value);
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value);
+      tx.value = withTiming(clamped.tx, { duration: 180 });
+      ty.value = withTiming(clamped.ty, { duration: 180 });
     });
 
   const pinch = Gesture.Pinch()
     .enabled(enabled)
+    .shouldCancelWhenOutside(false)
     .onBegin(() => {
       startScale.value = scale.value;
       startTx.value = tx.value;
       startTy.value = ty.value;
+      if (onZoomGestureStart) {
+        runOnJS(onZoomGestureStart)();
+      }
     })
     .onUpdate((e) => {
-      let next = startScale.value * e.scale;
+      // A slightly amplified pinch curve makes zoom feel closer to native mind-map apps.
+      let next = startScale.value * Math.pow(e.scale, 1.35);
       if (next < minScale) next = minScale;
       if (next > maxScale) next = maxScale;
 
@@ -96,28 +209,53 @@ export default function ZoomableCanvas({
       const s0 = startScale.value;
       const s1 = next;
 
-      tx.value = startTx.value + (1 - s1 / s0) * (fx - cx);
-      ty.value = startTy.value + (1 - s1 / s0) * (fy - cy);
+      const t0x = startTx.value;
+      const t0y = startTy.value;
+      const focalShiftX = fx - cx;
+      const focalShiftY = fy - cy;
+      const nextTx = focalShiftX - ((focalShiftX - t0x) * s1) / s0;
+      const nextTy = focalShiftY - ((focalShiftY - t0y) * s1) / s0;
+      const clamped = clampOffsets(nextTx, nextTy, s1);
+      tx.value = clamped.tx;
+      ty.value = clamped.ty;
 
       scale.value = next;
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, next);
 
       if (onScaleChange) runOnJS(setScaleJS)(next);
     })
     .onEnd(() => {
       if (onScaleChange) runOnJS(setScaleJS)(scale.value);
+      if (onZoomGestureEnd) {
+        runOnJS(onZoomGestureEnd)();
+      }
+    })
+    .onFinalize(() => {
+      if (onZoomGestureEnd) {
+        runOnJS(onZoomGestureEnd)();
+      }
     });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .enabled(enabled)
+    .maxDuration(220)
+    .maxDelay(260)
+    .maxDistance(18)
+    .shouldCancelWhenOutside(false)
     .onEnd(() => {
-      tx.value = withTiming(0);
-      ty.value = withTiming(0);
-      scale.value = withTiming(1);
-      if (onScaleChange) runOnJS(setScaleJS)(1);
+      if (onDoubleTap) {
+        runOnJS(onDoubleTap)();
+      } else {
+        runOnJS(setTransformJS)(0, 0, 1);
+        tx.value = withTiming(0);
+        ty.value = withTiming(0);
+        scale.value = withTiming(1);
+        if (onScaleChange) runOnJS(setScaleJS)(1);
+      }
     });
 
-  const gesture = Gesture.Simultaneous(pan, pinch, doubleTap);
+  const gesture = Gesture.Exclusive(doubleTap, Gesture.Simultaneous(pinch, pan));
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -130,18 +268,37 @@ export default function ZoomableCanvas({
   return (
     <View style={styles.container} onLayout={onLayout}>
       <GestureDetector gesture={gesture}>
-        <Animated.View style={[styles.content, animatedStyle]}>
-          {children}
-        </Animated.View>
+        <View style={styles.gestureSurface}>
+          <Animated.View style={[styles.content, animatedStyle]}>
+            {children}
+          </Animated.View>
+          {tapEnabled && onTapPoint ? (
+            <Pressable
+              style={styles.tapOverlay}
+              onPress={(event) => {
+                onTapPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
+              }}
+            />
+          ) : null}
+        </View>
       </GestureDetector>
     </View>
   );
-}
+});
+
+export default ZoomableCanvas;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     overflow: "hidden",
+  },
+  gestureSurface: {
+    flex: 1,
+  },
+  tapOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30,
   },
   content: {
     flex: 1,
