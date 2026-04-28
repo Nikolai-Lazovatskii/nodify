@@ -207,6 +207,6 @@ Obrazovka najvyššej úrovne zobrazujúca myšlienkovú mapu v aplikácii.
 
 ---
 
-## Slovak Summary
+## Summary
 
 Nodify je multiplatformová mobilná aplikácia určená na tvorbu, úpravu a vizualizáciu myšlienkových máp, vyvíjaná ako súčasť bakalárskej práce na Univerzite Komenského v Bratislave. Cieľom je podporovať formáty **XMind (.xmind)** a **FreeMind (.mm)**, zlepšiť interoperabilitu medzi desktopovými nástrojmi a mobilnou aplikáciou, umožniť offline prácu a pripraviť priestor pre budúcu cloudovú synchronizáciu. Aktuálna verzia predstavuje MVP zamerané na dátový model, základnú vizualizáciu a návrh architektúry pre ďalší rozvoj aplikácie.
