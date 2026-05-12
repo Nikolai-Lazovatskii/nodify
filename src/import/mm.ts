@@ -1,4 +1,4 @@
-import { MindMap, MindMapNode, NodeShape, RelationshipEdge } from "../types/map";
+import { MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
 
 type ParsedXmlNode = {
   attrs: Record<string, string>;
@@ -49,6 +49,40 @@ function parseMmLineWidth(value: string | undefined, fallback = 2): number {
   }
 
   return Math.max(1, numeric);
+}
+
+function parseMmNumber(value: string | undefined): number | undefined {
+  const numeric = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function getAttachmentNameFromLink(link: string, fallback: string): string {
+  const withoutQuery = link.split(/[?#]/)[0] ?? link;
+  const normalized = withoutQuery.replace(/\\/g, "/").replace(/\/+$/g, "");
+  const lastSegment = normalized.split("/").filter(Boolean).pop();
+
+  if (!lastSegment) {
+    return fallback;
+  }
+
+  try {
+    return decodeURIComponent(lastSegment).trim() || fallback;
+  } catch {
+    return lastSegment.trim() || fallback;
+  }
+}
+
+function buildMmLinkAttachment(nodeId: string, attrs: Record<string, string>, fallbackName: string): NodeAttachment | undefined {
+  const link = attrs.LINK?.trim();
+  if (!link) {
+    return undefined;
+  }
+
+  return {
+    id: `mm_link_${nodeId}`,
+    name: getAttachmentNameFromLink(link, fallbackName),
+    uri: link,
+  };
 }
 
 function decodeHtmlToText(value: string): string {
@@ -247,12 +281,16 @@ function buildImportedNodes(
     typeof lineWidthSource === "string" ||
     typeof lineColorSource === "string";
 
+  const title = safeNodeTitle(source.attrs.TEXT, parentId ? "Imported node" : "Imported map");
+  const attachment = buildMmLinkAttachment(id, source.attrs, title);
+
   const node: MindMapNode = {
     id,
     parentId,
-    title: safeNodeTitle(source.attrs.TEXT, parentId ? "Imported node" : "Imported map"),
+    title,
     note: source.note?.trim() || undefined,
     tags: source.tags?.filter(Boolean)?.length ? Array.from(new Set(source.tags.filter(Boolean))) : undefined,
+    attachments: attachment ? [attachment] : undefined,
     x: 0,
     y: 0,
     children: [],
@@ -342,13 +380,37 @@ function importArrowLinks(
   return edges;
 }
 
-function countLeaves(nodeId: string, nodes: Record<string, MindMapNode>): number {
+function mmNodeAttrs(node: MindMapNode): Record<string, string> {
+  return node.vendor?.mm?.rawAttributes ?? {};
+}
+
+function mmNodeSide(node: MindMapNode): "left" | "right" | undefined {
+  const position = (mmNodeAttrs(node).POSITION ?? "").toLowerCase();
+  if (position === "left") {
+    return "left";
+  }
+  if (position === "right") {
+    return "right";
+  }
+  return undefined;
+}
+
+function estimateImportedNodeWidth(node: MindMapNode): number {
+  const titleWidth = Math.max(110, node.title.length * 8 + 52);
+  return Math.min(320, titleWidth);
+}
+
+function estimateImportedSubtreeHeight(nodeId: string, nodes: Record<string, MindMapNode>): number {
   const node = nodes[nodeId];
-  if (!node || node.children.length === 0) {
-    return 1;
+  if (!node || node.children.length === 0 || node.collapsed) {
+    return 96;
   }
 
-  return node.children.reduce((sum, childId) => sum + countLeaves(childId, nodes), 0);
+  const childrenHeight = node.children.reduce(
+    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes),
+    0
+  );
+  return Math.max(112, childrenHeight);
 }
 
 function layoutSubtree(
@@ -356,32 +418,35 @@ function layoutSubtree(
   nodes: Record<string, MindMapNode>,
   sign: -1 | 1,
   depth: number,
-  startY: number
+  centerY: number,
+  parentX = 0
 ): number {
   const node = nodes[nodeId];
   if (!node) {
-    return startY;
+    return 0;
   }
 
-  const xGap = 180;
-  const yGap = 110;
+  const attrs = mmNodeAttrs(node);
+  const hGap = parseMmNumber(attrs.HGAP);
+  const vShift = parseMmNumber(attrs.VSHIFT) ?? 0;
+  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes);
+  const xGap = Math.max(190, estimateImportedNodeWidth(node) + 76, hGap ? hGap + 130 : 0);
+  node.x = parentX + sign * xGap;
+  node.y = centerY + vShift;
 
-  if (node.children.length === 0) {
-    node.x = sign * depth * xGap;
-    node.y = startY;
-    return startY + yGap;
+  if (node.children.length === 0 || node.collapsed) {
+    return branchHeight;
   }
 
-  let cursorY = startY;
+  let cursorY = node.y - branchHeight / 2;
   for (const childId of node.children) {
-    cursorY = layoutSubtree(childId, nodes, sign, depth + 1, cursorY);
+    const childHeight = estimateImportedSubtreeHeight(childId, nodes);
+    const childCenterY = cursorY + childHeight / 2;
+    layoutSubtree(childId, nodes, sign, depth + 1, childCenterY, node.x);
+    cursorY += childHeight;
   }
 
-  const firstChild = nodes[node.children[0]];
-  const lastChild = nodes[node.children[node.children.length - 1]];
-  node.x = sign * depth * xGap;
-  node.y = firstChild && lastChild ? (firstChild.y + lastChild.y) / 2 : startY;
-  return cursorY;
+  return branchHeight;
 }
 
 function layoutImportedMap(map: MindMap): MindMap {
@@ -402,26 +467,40 @@ function layoutImportedMap(map: MindMap): MindMap {
   const leftSide: string[] = [];
 
   rootChildren.forEach((childId, index) => {
-    if (index % 2 === 0) {
+    const child = map.nodes[childId];
+    const side = child ? mmNodeSide(child) : undefined;
+    if (side === "left") {
+      leftSide.push(childId);
+      return;
+    }
+    if (side === "right") {
+      rightSide.push(childId);
+      return;
+    }
+
+    if (rightSide.length <= leftSide.length) {
       rightSide.push(childId);
     } else {
       leftSide.push(childId);
     }
   });
 
-  const totalLeftLeaves = leftSide.reduce((sum, childId) => sum + countLeaves(childId, map.nodes), 0);
-  const totalRightLeaves = rightSide.reduce((sum, childId) => sum + countLeaves(childId, map.nodes), 0);
-  const yGap = 110;
+  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
+  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
 
-  let leftCursor = -(Math.max(totalLeftLeaves - 1, 0) * yGap) / 2;
-  let rightCursor = -(Math.max(totalRightLeaves - 1, 0) * yGap) / 2;
+  let leftCursor = -totalLeftHeight / 2;
+  let rightCursor = -totalRightHeight / 2;
 
   for (const childId of leftSide) {
-    leftCursor = layoutSubtree(childId, map.nodes, -1, 1, leftCursor);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes);
+    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, root.x);
+    leftCursor += height;
   }
 
   for (const childId of rightSide) {
-    rightCursor = layoutSubtree(childId, map.nodes, 1, 1, rightCursor);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes);
+    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, root.x);
+    rightCursor += height;
   }
 
   const floatingNodes = Object.values(map.nodes).filter(
@@ -436,6 +515,23 @@ function layoutImportedMap(map: MindMap): MindMap {
   return map;
 }
 
+function preserveImportedPositions(map: MindMap): MindMap {
+  for (const node of Object.values(map.nodes)) {
+    node.vendor = {
+      ...node.vendor,
+      mm: {
+        ...node.vendor?.mm,
+        importedPosition: {
+          x: node.x,
+          y: node.y,
+        },
+      },
+    };
+  }
+
+  return map;
+}
+
 export async function importFromMm(xml: string, fallbackTitle = "Imported mind map"): Promise<MindMap> {
   const rootSource = parseMmTree(xml);
   const counter = { value: 0 };
@@ -445,7 +541,7 @@ export async function importFromMm(xml: string, fallbackTitle = "Imported mind m
   const relationshipEdges = importArrowLinks(rootSource, sourceNodeToNodeId, parsedRoot.nodes);
   const rawMapAttributes = parseMapAttributes(xml);
 
-  return layoutImportedMap({
+  return preserveImportedPositions(layoutImportedMap({
     id: "imported",
     title: safeNodeTitle(rootSource.attrs.TEXT, fallbackTitle),
     rootId: parsedRoot.rootId,
@@ -465,5 +561,5 @@ export async function importFromMm(xml: string, fallbackTitle = "Imported mind m
         },
       },
     },
-  });
+  }));
 }

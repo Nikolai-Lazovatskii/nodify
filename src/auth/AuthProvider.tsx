@@ -7,6 +7,8 @@ type AuthState = {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  syncing: boolean;
+  lastSyncAt: number | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -18,18 +20,23 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 
   const syncingRef = useRef(false);
 
   const runSync = async () => {
     if (syncingRef.current) return;
     syncingRef.current = true;
+    setSyncing(true);
     try {
       await syncMapsOnce();
+      setLastSyncAt(Date.now());
     } catch {
       // ignore (offline / RLS / transient)
     } finally {
       syncingRef.current = false;
+      setSyncing(false);
     }
   };
 
@@ -69,6 +76,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       user: session?.user ?? null,
       loading,
+      syncing,
+      lastSyncAt,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -86,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error) throw error;
       },
     };
-  }, [session, loading]);
+  }, [lastSyncAt, session, loading, syncing]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

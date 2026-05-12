@@ -25,9 +25,17 @@ export type VendorSpecificNodeData = {
     rawTopic?: JsonValue;
     importedFillColor?: string;
     importedDisplayColor?: string;
+    importedPosition?: {
+      x: number;
+      y: number;
+    };
   };
   mm?: {
     sourceNodeId?: string;
+    importedPosition?: {
+      x: number;
+      y: number;
+    };
     rawAttributes?: Record<string, string>;
     rawEdgeAttributes?: Record<string, string>;
     rawChildElements?: string[];

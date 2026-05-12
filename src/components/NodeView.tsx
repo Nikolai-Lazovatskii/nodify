@@ -1,6 +1,7 @@
 import React from 'react';
 import { Circle, Text as SvgText } from 'react-native-svg';
 import { MindMapNode } from '../types/map';
+import { getDisplayNodeTitle } from '../screens/mapScreen/routing';
 
 type Props = {
   node: MindMapNode;
@@ -22,7 +23,7 @@ export default function NodeView({ node, radius = 22, isRoot = false }: Props) {
         fill="#111827"
         textAnchor="middle"
       >
-        {node.title}
+        {getDisplayNodeTitle(node.title)}
       </SvgText>
     </>
   );

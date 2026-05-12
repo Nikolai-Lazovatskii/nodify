@@ -1,6 +1,7 @@
 import React, {
   forwardRef,
   PropsWithChildren,
+  useEffect,
   useCallback,
   useImperativeHandle,
   useRef,
@@ -25,9 +26,22 @@ type Props = PropsWithChildren<{
   tapEnabled?: boolean;
   onZoomGestureStart?: () => void;
   onZoomGestureEnd?: () => void;
+  onTransformChange?: (transform: CanvasTransform) => void;
+  notifyTransformDuringGesture?: boolean;
+  transformNotifyIntervalMs?: number;
+  notifyScaleDuringGesture?: boolean;
+  scaleNotifyIntervalMs?: number;
   contentWidth?: number;
   contentHeight?: number;
 }>;
+
+export type CanvasTransform = {
+  tx: number;
+  ty: number;
+  scale: number;
+  width: number;
+  height: number;
+};
 
 export type ZoomableCanvasHandle = {
   centerOn: (
@@ -52,12 +66,19 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
   tapEnabled = false,
   onZoomGestureStart,
   onZoomGestureEnd,
+  onTransformChange,
+  notifyTransformDuringGesture = true,
+  transformNotifyIntervalMs = 80,
+  notifyScaleDuringGesture = true,
+  scaleNotifyIntervalMs = 100,
   contentWidth,
   contentHeight,
 }, ref) {
   const [size, setSize] = useState({ w: 1, h: 1 });
   const sizeRef = useRef({ w: 1, h: 1 });
   const transformRef = useRef({ tx: 0, ty: 0, scale: 1 });
+  const lastTransformNotifyRef = useRef(0);
+  const lastScaleNotifyRef = useRef(0);
 
   const sizeW = useSharedValue(1);
   const sizeH = useSharedValue(1);
@@ -72,13 +93,42 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
   const startScale = useSharedValue(1);
 
   const setScaleJS = useCallback(
-    (s: number) => onScaleChange?.(s),
-    [onScaleChange]
+    (s: number, forceNotify = false) => {
+      if (!onScaleChange) {
+        return;
+      }
+
+      const now = Date.now();
+      if (!forceNotify && (!notifyScaleDuringGesture || now - lastScaleNotifyRef.current < scaleNotifyIntervalMs)) {
+        return;
+      }
+
+      lastScaleNotifyRef.current = now;
+      onScaleChange(s);
+    },
+    [notifyScaleDuringGesture, onScaleChange, scaleNotifyIntervalMs]
   );
 
-  const setTransformJS = useCallback((nextTx: number, nextTy: number, nextScale: number) => {
+  const setTransformJS = useCallback((nextTx: number, nextTy: number, nextScale: number, forceNotify = false) => {
     transformRef.current = { tx: nextTx, ty: nextTy, scale: nextScale };
-  }, []);
+    if (!onTransformChange) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!forceNotify && (!notifyTransformDuringGesture || now - lastTransformNotifyRef.current < transformNotifyIntervalMs)) {
+      return;
+    }
+
+    lastTransformNotifyRef.current = now;
+    onTransformChange({
+      tx: nextTx,
+      ty: nextTy,
+      scale: nextScale,
+      width: sizeRef.current.w,
+      height: sizeRef.current.h,
+    });
+  }, [notifyTransformDuringGesture, onTransformChange, transformNotifyIntervalMs]);
 
   const clampOffsets = (
     nextTx: number,
@@ -110,13 +160,13 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
         tx: Math.max(-maxOffsetX, Math.min(maxOffsetX, -x * clampedScale)),
         ty: Math.max(-maxOffsetY, Math.min(maxOffsetY, -y * clampedScale)),
       };
-      setTransformJS(clampedOffsets.tx, clampedOffsets.ty, clampedScale);
+      setTransformJS(clampedOffsets.tx, clampedOffsets.ty, clampedScale, true);
       tx.value = withTiming(clampedOffsets.tx, { duration: 220 });
       ty.value = withTiming(clampedOffsets.ty, { duration: 220 });
       scale.value = withTiming(clampedScale, { duration: 220 });
-      onScaleChange?.(clampedScale);
+      setScaleJS(clampedScale, true);
     },
-    [contentHeight, contentWidth, maxScale, minScale, onScaleChange, scale, setTransformJS, size.h, size.w, tx, ty]
+    [contentHeight, contentWidth, maxScale, minScale, scale, setScaleJS, setTransformJS, size.h, size.w, tx, ty]
   );
 
   useImperativeHandle(
@@ -149,10 +199,17 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
     sizeRef.current = { w: width, h: height };
     sizeW.value = width;
     sizeH.value = height;
+    onTransformChange?.({
+      ...transformRef.current,
+      width,
+      height,
+    });
   };
 
-  contentW.value = contentWidth ?? size.w;
-  contentH.value = contentHeight ?? size.h;
+  useEffect(() => {
+    contentW.value = contentWidth ?? size.w;
+    contentH.value = contentHeight ?? size.h;
+  }, [contentH, contentHeight, contentW, contentWidth, size.h, size.w]);
 
   const pan = Gesture.Pan()
     .enabled(enabled)
@@ -168,17 +225,17 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
       const movementFactor = 0.82;
       tx.value = startTx.value + e.translationX * movementFactor;
       ty.value = startTy.value + e.translationY * movementFactor;
-      runOnJS(setTransformJS)(tx.value, ty.value, scale.value);
+      runOnJS(setTransformJS)(tx.value, ty.value, scale.value, false);
     })
     .onEnd(() => {
       const clamped = clampOffsets(tx.value, ty.value, scale.value);
-      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value);
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value, true);
       tx.value = withTiming(clamped.tx, { duration: 180 });
       ty.value = withTiming(clamped.ty, { duration: 180 });
     })
     .onFinalize(() => {
       const clamped = clampOffsets(tx.value, ty.value, scale.value);
-      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value);
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, scale.value, true);
       tx.value = withTiming(clamped.tx, { duration: 180 });
       ty.value = withTiming(clamped.ty, { duration: 180 });
     });
@@ -220,12 +277,13 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
       ty.value = clamped.ty;
 
       scale.value = next;
-      runOnJS(setTransformJS)(clamped.tx, clamped.ty, next);
+      runOnJS(setTransformJS)(clamped.tx, clamped.ty, next, false);
 
-      if (onScaleChange) runOnJS(setScaleJS)(next);
+      if (onScaleChange) runOnJS(setScaleJS)(next, false);
     })
     .onEnd(() => {
-      if (onScaleChange) runOnJS(setScaleJS)(scale.value);
+      if (onScaleChange) runOnJS(setScaleJS)(scale.value, true);
+      runOnJS(setTransformJS)(tx.value, ty.value, scale.value, true);
       if (onZoomGestureEnd) {
         runOnJS(onZoomGestureEnd)();
       }
@@ -251,7 +309,7 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
         tx.value = withTiming(0);
         ty.value = withTiming(0);
         scale.value = withTiming(1);
-        if (onScaleChange) runOnJS(setScaleJS)(1);
+        if (onScaleChange) runOnJS(setScaleJS)(1, true);
       }
     });
 

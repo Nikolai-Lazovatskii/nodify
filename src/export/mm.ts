@@ -1,11 +1,13 @@
 import { MindMap, MindMapNode } from "../types/map";
+import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
 
 export function exportToMm(map: MindMap): string {
-  if (!map.nodes[map.rootId]) {
+  const exportMap = layoutStructuredMap(map);
+  if (!exportMap.nodes[exportMap.rootId]) {
     throw new Error("Root node not found");
   }
 
-  const rawMapAttrs = map.importedFormat?.vendor?.mm?.rawMapAttributes ?? {};
+  const rawMapAttrs = exportMap.importedFormat?.vendor?.mm?.rawMapAttributes ?? {};
   const mapAttrs: Record<string, string> = { ...rawMapAttrs };
   if (!("version" in mapAttrs) && !("VERSION" in mapAttrs)) {
     mapAttrs.version = "1.0.1";
@@ -15,7 +17,7 @@ export function exportToMm(map: MindMap): string {
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push(`<map ${serializeAttrs(mapAttrs)}>`);
 
-  lines.push(serializeNode(map, map.rootId, 1, new Set()));
+  lines.push(serializeNode(exportMap, exportMap.rootId, 1, new Set()));
 
   lines.push("</map>");
   return lines.join("\n");
@@ -102,13 +104,57 @@ function serializeAttrs(attrs: Record<string, string | undefined>): string {
     .join(" ");
 }
 
-function buildNodeAttrs(node: MindMapNode): string {
+function hasImportedPositionChanged(node: MindMapNode): boolean {
+  const importedPosition = node.vendor?.mm?.importedPosition;
+  if (!importedPosition) {
+    return true;
+  }
+
+  return Math.abs(node.x - importedPosition.x) > 0.5 || Math.abs(node.y - importedPosition.y) > 0.5;
+}
+
+function applyManagedFreeMindPosition(
+  map: MindMap,
+  node: MindMapNode,
+  attrs: Record<string, string | undefined>
+) {
+  if (!node.parentId) {
+    return;
+  }
+
+  const parent = map.nodes[node.parentId];
+  if (!parent || !hasImportedPositionChanged(node)) {
+    return;
+  }
+
+  const dx = node.x - parent.x;
+
+  if (parent.id === map.rootId) {
+    attrs.POSITION = dx < 0 ? "left" : "right";
+  } else if (!node.vendor?.mm?.rawAttributes?.POSITION) {
+    delete attrs.POSITION;
+  }
+
+  delete attrs.HGAP;
+  delete attrs.VSHIFT;
+}
+
+function buildNodeAttrs(map: MindMap, node: MindMapNode): string {
   const rawAttrs = node.vendor?.mm?.rawAttributes ?? {};
+  const primaryAttachment = node.attachments?.[0];
   const attrs: Record<string, string | undefined> = {
     ...rawAttrs,
     TEXT: node.title ?? "",
     ID: node.id,
   };
+
+  if (primaryAttachment?.uri) {
+    attrs.LINK = primaryAttachment.uri;
+  } else if (!rawAttrs.LINK) {
+    delete attrs.LINK;
+  }
+
+  applyManagedFreeMindPosition(map, node, attrs);
 
   if (node.collapsed === true) {
     attrs.FOLDED = "true";
@@ -227,7 +273,7 @@ function serializeNode(
   nextVisited.add(nodeId);
 
   const indent = "  ".repeat(depth);
-  const attrs = buildNodeAttrs(node);
+  const attrs = buildNodeAttrs(map, node);
   const parentEdgeAttrs = buildParentEdgeAttrs(node);
   const arrowLinks = buildArrowLinkAttrs(map, node);
   const rawChildElements = node.vendor?.mm?.rawChildElements ?? [];

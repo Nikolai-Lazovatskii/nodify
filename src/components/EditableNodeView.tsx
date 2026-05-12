@@ -11,6 +11,11 @@ import * as Haptics from "expo-haptics";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import { MindMapNode, NodeShape } from "../types/map";
+import {
+  getDisplayNodeTitle,
+  getNodeImageAttachment,
+  NODE_IMAGE_THUMB_SIZE,
+} from "../screens/mapScreen/routing";
 
 type Props = {
   node: MindMapNode;
@@ -23,6 +28,8 @@ type Props = {
   onSelect: (nodeId: string) => void;
   linkMode?: boolean;
   onSelectLinkTarget?: (nodeId: string) => void;
+  changeParentMode?: boolean;
+  onSelectChangeParentTarget?: (nodeId: string) => void;
   onStartReposition?: (nodeId: string) => void;
 };
 
@@ -37,6 +44,8 @@ function EditableNodeView({
   onSelect,
   linkMode = false,
   onSelectLinkTarget,
+  changeParentMode = false,
+  onSelectChangeParentTarget,
   onStartReposition,
 }: Props) {
   const shake = useRef(new Animated.Value(0)).current;
@@ -89,11 +98,16 @@ function EditableNodeView({
       return;
     }
 
+    if (changeParentMode && onSelectChangeParentTarget) {
+      onSelectChangeParentTarget(node.id);
+      return;
+    }
+
     onSelect(node.id);
   };
 
   const handleLongPress = () => {
-    if (linkMode || placementMode || !onStartReposition) {
+    if (linkMode || changeParentMode || placementMode || !onStartReposition) {
       return;
     }
 
@@ -105,9 +119,15 @@ function EditableNodeView({
   const fontSize = Math.max(12, Math.round(baseR * (isRoot ? 0.45 : 0.38)));
   const textPaddingX = isRoot ? 22 : 18;
   const approxCharW = fontSize * 0.6;
-  const textW = Math.max(24, (node.title ?? "").length * approxCharW);
+  const displayTitle = getDisplayNodeTitle(node.title);
+  const textW = Math.max(24, displayTitle.length * approxCharW);
+  const imageAttachment = getNodeImageAttachment(node);
   const hasMeta = !!node.note || !!node.dueAt || (node.attachments ?? []).length > 0 || (node.tags ?? []).length > 0;
-  const width = Math.max(baseR * (isRoot ? 2.8 : 2.65), textW + textPaddingX * 2, hasMeta ? 112 : 0);
+  const width = Math.max(
+    baseR * (isRoot ? 2.8 : 2.65),
+    textW + textPaddingX * 2 + (imageAttachment ? NODE_IMAGE_THUMB_SIZE + 6 : 0),
+    hasMeta ? 112 : 0
+  );
   const height = baseR * (hasMeta ? 2.35 : 2.1);
   const left = worldWidth / 2 + node.x - width / 2;
   const top = worldHeight / 2 + node.y - height / 2;
@@ -174,9 +194,16 @@ function EditableNodeView({
           },
         ]}
       >
-        <Text numberOfLines={1} style={[styles.label, { fontSize, color: textColor }]}>
-          {node.title}
-        </Text>
+        <View style={styles.titleRow}>
+          {imageAttachment ? (
+            <View style={styles.imageThumb}>
+              <MaterialIcons name="image" size={13} color={isRoot ? "#e0f2fe" : "#0369a1"} />
+            </View>
+          ) : null}
+          <Text numberOfLines={1} style={[styles.label, { fontSize, color: textColor }]}>
+            {displayTitle}
+          </Text>
+        </View>
         {hasMeta ? (
           <View style={styles.metaRow}>
             {node.dueAt ? (
@@ -218,8 +245,10 @@ export default memo(EditableNodeView, (prev, next) => {
     prev.shape === next.shape &&
     prev.placementMode === next.placementMode &&
     prev.linkMode === next.linkMode &&
+    prev.changeParentMode === next.changeParentMode &&
     prev.onSelect === next.onSelect &&
     prev.onSelectLinkTarget === next.onSelectLinkTarget &&
+    prev.onSelectChangeParentTarget === next.onSelectChangeParentTarget &&
     prev.onStartReposition === next.onStartReposition
   );
 });
@@ -263,6 +292,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
     includeFontPadding: false,
     letterSpacing: 0,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    maxWidth: "100%",
+  },
+  imageThumb: {
+    width: NODE_IMAGE_THUMB_SIZE,
+    height: NODE_IMAGE_THUMB_SIZE,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.08)",
   },
   metaRow: {
     position: "absolute",

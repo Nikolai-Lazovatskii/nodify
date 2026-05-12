@@ -18,7 +18,9 @@ export default function CreateTab() {
 
       (async () => {
         try {
-          const map = await createMap(t("create.newMindMap"), t("create.root"));
+          const map = await createMap(t("create.newMindMap"), t("create.root"), {
+            numberedTitle: true,
+          });
           if (cancelled) return;
 
           router.replace({

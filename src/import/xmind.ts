@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 
-import { JsonValue, MindMap, MindMapNode, NodeShape, RelationshipEdge } from "../types/map";
+import { JsonValue, MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
 
 type XMindTopic = {
   id?: string;
@@ -47,6 +47,8 @@ type XMindSheet = {
 
 type XMindChildrenBucket = XMindTopic | XMindTopic[] | { topics?: XMindTopic | XMindTopic[] } | undefined;
 type StyleProperties = Record<string, string | undefined>;
+
+type XMindImageResolver = (topic: XMindTopic, nodeId: string) => Promise<NodeAttachment | undefined>;
 
 function parseXmindShape(shapeClass: string | undefined): NodeShape | undefined {
   const value = (shapeClass ?? "").toLowerCase();
@@ -517,13 +519,227 @@ function parseLineWidth(raw: string | undefined, fallback = 2): number {
   return Math.max(1, numeric);
 }
 
-function countLeaves(nodeId: string, nodes: Record<string, MindMapNode>): number {
-  const node = nodes[nodeId];
-  if (!node || node.children.length === 0) {
-    return 1;
+function parsePositionNumber(raw: unknown): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (typeof raw === "string") {
+    const numeric = Number(raw.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return undefined;
+}
+
+function readTopicPosition(topic: XMindTopic): { x: number; y: number } | undefined {
+  const rawTopic = topic as Record<string, unknown>;
+  const candidates = [
+    rawTopic.position,
+    rawTopic.location,
+    rawTopic.offset,
+    rawTopic.coordinates,
+  ];
+
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+
+    const x =
+      parsePositionNumber(candidate.x) ??
+      parsePositionNumber(candidate.X) ??
+      parsePositionNumber(candidate.left);
+    const y =
+      parsePositionNumber(candidate.y) ??
+      parsePositionNumber(candidate.Y) ??
+      parsePositionNumber(candidate.top);
+
+    if (typeof x === "number" && typeof y === "number") {
+      return { x, y };
+    }
   }
 
-  return node.children.reduce((sum, childId) => sum + countLeaves(childId, nodes), 0);
+  const x =
+    parsePositionNumber(rawTopic.x) ??
+    parsePositionNumber(rawTopic.X) ??
+    parsePositionNumber(rawTopic.left);
+  const y =
+    parsePositionNumber(rawTopic.y) ??
+    parsePositionNumber(rawTopic.Y) ??
+    parsePositionNumber(rawTopic.top);
+
+  if (typeof x === "number" && typeof y === "number") {
+    return { x, y };
+  }
+
+  return undefined;
+}
+
+function getFileNameFromPath(path: string) {
+  const clean = path.split(/[?#]/)[0];
+  const parts = clean.split("/");
+  return decodeURIComponent(parts[parts.length - 1] || "image");
+}
+
+function mimeFromPath(path: string) {
+  const lower = path.toLowerCase().split(/[?#]/)[0];
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".heic")) return "image/heic";
+  if (lower.endsWith(".heif")) return "image/heif";
+  return "image/png";
+}
+
+function normalizeXmindResourcePath(src: string) {
+  const trimmed = src.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return decodeURIComponent(
+    trimmed
+      .replace(/^xap:/i, "")
+      .replace(/^file:\/\//i, "")
+      .replace(/^\/+/, "")
+  );
+}
+
+function extractStringField(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function readTopicImageSource(topic: XMindTopic): string | undefined {
+  const rawTopic = topic as Record<string, unknown>;
+  const candidates = [
+    rawTopic.image,
+    rawTopic.images,
+    rawTopic.img,
+    rawTopic["xhtml:img"],
+    rawTopic["svg:image"],
+  ];
+
+  for (const candidate of candidates) {
+    const item = Array.isArray(candidate) ? candidate[0] : candidate;
+    if (typeof item === "string" && item.trim()) {
+      return item.trim();
+    }
+    if (isRecord(item)) {
+      const src = extractStringField(item, [
+        "src",
+        "href",
+        "url",
+        "path",
+        "resource",
+        "source",
+        "xlink:href",
+      ]);
+      if (src) {
+        return src;
+      }
+    }
+  }
+
+  const src = extractStringField(rawTopic, [
+    "image-src",
+    "imageSrc",
+    "imageUrl",
+    "image-url",
+  ]);
+  return src;
+}
+
+function findZipResource(zip: JSZip, src: string) {
+  const normalized = normalizeXmindResourcePath(src);
+  if (!normalized) {
+    return null;
+  }
+
+  const candidates = [
+    normalized,
+    normalized.replace(/^resources\//i, "Resources/"),
+    normalized.replace(/^Resources\//, "resources/"),
+    `resources/${normalized}`,
+    `Resources/${normalized}`,
+    `attachments/${normalized}`,
+    `Attachments/${normalized}`,
+  ];
+
+  for (const candidate of candidates) {
+    const file = zip.file(candidate);
+    if (file) {
+      return { file, path: candidate };
+    }
+  }
+
+  const basename = getFileNameFromPath(normalized).toLowerCase();
+  if (!basename) {
+    return null;
+  }
+
+  const fallback = zip
+    .file(/.*/)
+    .find((file) => !file.dir && getFileNameFromPath(file.name).toLowerCase() === basename);
+  return fallback ? { file: fallback, path: fallback.name } : null;
+}
+
+function createXmindImageResolver(zip: JSZip): XMindImageResolver {
+  return async (topic, nodeId) => {
+    const src = readTopicImageSource(topic);
+    if (!src) {
+      return undefined;
+    }
+
+    if (/^https?:\/\//i.test(src) || /^data:image\//i.test(src)) {
+      return {
+        id: `xmind_image_${nodeId}`,
+        name: getFileNameFromPath(src) || "XMind image",
+        uri: src,
+        mimeType: /^data:image\//i.test(src) ? src.slice(5, src.indexOf(";")) : mimeFromPath(src),
+      };
+    }
+
+    const resource = findZipResource(zip, src);
+    if (!resource) {
+      return undefined;
+    }
+
+    const base64 = await resource.file.async("base64");
+    const mimeType = mimeFromPath(resource.path);
+    return {
+      id: `xmind_image_${nodeId}`,
+      name: getFileNameFromPath(resource.path) || "XMind image",
+      uri: `data:${mimeType};base64,${base64}`,
+      mimeType,
+    };
+  };
+}
+
+function estimateImportedNodeWidth(node: MindMapNode): number {
+  const titleWidth = Math.max(110, node.title.length * 8 + 52);
+  return Math.min(320, titleWidth);
+}
+
+function estimateImportedSubtreeHeight(nodeId: string, nodes: Record<string, MindMapNode>): number {
+  const node = nodes[nodeId];
+  if (!node || node.children.length === 0 || node.collapsed) {
+    return 96;
+  }
+
+  const childrenHeight = node.children.reduce(
+    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes),
+    0
+  );
+  return Math.max(112, childrenHeight);
 }
 
 function layoutSubtree(
@@ -531,32 +747,40 @@ function layoutSubtree(
   nodes: Record<string, MindMapNode>,
   sign: -1 | 1,
   depth: number,
-  startY: number
+  centerY: number,
+  parentX = 0
 ): number {
   const node = nodes[nodeId];
   if (!node) {
-    return startY;
+    return 0;
   }
 
-  const xGap = 180;
-  const yGap = 110;
-
-  if (node.children.length === 0) {
-    node.x = sign * depth * xGap;
-    node.y = startY;
-    return startY + yGap;
+  if (node.vendor?.xmind?.rawTopic) {
+    const importedPosition = readTopicPosition(node.vendor.xmind.rawTopic as XMindTopic);
+    if (importedPosition) {
+      node.x = importedPosition.x;
+      node.y = importedPosition.y;
+      return estimateImportedSubtreeHeight(nodeId, nodes);
+    }
   }
 
-  let cursorY = startY;
+  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes);
+  const xGap = Math.max(190, estimateImportedNodeWidth(node) + 76);
+  node.x = parentX + sign * xGap;
+  node.y = centerY;
+
+  if (node.children.length === 0 || node.collapsed) {
+    return branchHeight;
+  }
+
+  let cursorY = node.y - branchHeight / 2;
   for (const childId of node.children) {
-    cursorY = layoutSubtree(childId, nodes, sign, depth + 1, cursorY);
+    const childHeight = estimateImportedSubtreeHeight(childId, nodes);
+    layoutSubtree(childId, nodes, sign, depth + 1, cursorY + childHeight / 2, node.x);
+    cursorY += childHeight;
   }
 
-  const firstChild = nodes[node.children[0]];
-  const lastChild = nodes[node.children[node.children.length - 1]];
-  node.x = sign * depth * xGap;
-  node.y = firstChild && lastChild ? (firstChild.y + lastChild.y) / 2 : startY;
-  return cursorY;
+  return branchHeight;
 }
 
 function layoutImportedMap(map: MindMap): MindMap {
@@ -584,19 +808,22 @@ function layoutImportedMap(map: MindMap): MindMap {
     }
   });
 
-  const totalLeftLeaves = leftSide.reduce((sum, childId) => sum + countLeaves(childId, map.nodes), 0);
-  const totalRightLeaves = rightSide.reduce((sum, childId) => sum + countLeaves(childId, map.nodes), 0);
-  const yGap = 110;
+  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
+  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
 
-  let leftCursor = -(Math.max(totalLeftLeaves - 1, 0) * yGap) / 2;
-  let rightCursor = -(Math.max(totalRightLeaves - 1, 0) * yGap) / 2;
+  let leftCursor = -totalLeftHeight / 2;
+  let rightCursor = -totalRightHeight / 2;
 
   for (const childId of leftSide) {
-    leftCursor = layoutSubtree(childId, map.nodes, -1, 1, leftCursor);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes);
+    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, root.x);
+    leftCursor += height;
   }
 
   for (const childId of rightSide) {
-    rightCursor = layoutSubtree(childId, map.nodes, 1, 1, rightCursor);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes);
+    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, root.x);
+    rightCursor += height;
   }
 
   const floatingNodes = Object.values(map.nodes).filter(
@@ -604,21 +831,48 @@ function layoutImportedMap(map: MindMap): MindMap {
   );
 
   floatingNodes.forEach((node, index) => {
-    node.x = (index - (floatingNodes.length - 1) / 2) * 220;
-    node.y = -220;
+    const importedPosition = node.vendor?.xmind?.rawTopic
+      ? readTopicPosition(node.vendor.xmind.rawTopic as XMindTopic)
+      : undefined;
+    if (importedPosition) {
+      node.x = importedPosition.x;
+      node.y = importedPosition.y;
+      return;
+    }
+
+    node.x = (index - (floatingNodes.length - 1) / 2) * 260;
+    node.y = -260;
   });
 
   return map;
 }
 
-function buildImportedNodes(
+function preserveImportedPositions(map: MindMap): MindMap {
+  for (const node of Object.values(map.nodes)) {
+    node.vendor = {
+      ...node.vendor,
+      xmind: {
+        ...node.vendor?.xmind,
+        importedPosition: {
+          x: node.x,
+          y: node.y,
+        },
+      },
+    };
+  }
+
+  return map;
+}
+
+async function buildImportedNodes(
   topic: XMindTopic,
   parentId: string | null,
   counter: { value: number },
   usedIds: Set<string>,
   sourceTopicToNodeId: Record<string, string>,
-  styleLookup: Map<string, StyleProperties>
-): { rootId: string; nodes: Record<string, MindMapNode> } {
+  styleLookup: Map<string, StyleProperties>,
+  resolveImageAttachment: XMindImageResolver
+): Promise<{ rootId: string; nodes: Record<string, MindMapNode> }> {
   const id = resolveTopicId(topic, usedIds, counter);
   const sourceTopicId = typeof topic.id === "string" && topic.id.trim() ? topic.id.trim() : undefined;
   if (sourceTopicId) {
@@ -632,6 +886,7 @@ function buildImportedNodes(
     typeof linePattern === "string" || typeof lineWidth === "string" || typeof lineColor === "string";
   const fillColor = resolveTopicFillColor(topic, styleLookup);
   const displayColor = fillColor ?? resolveTopicLineColor(topic, styleLookup);
+  const imageAttachment = await resolveImageAttachment(topic, id);
 
   const node: MindMapNode = {
     id,
@@ -639,6 +894,7 @@ function buildImportedNodes(
     title: safeTitle(topic.title, parentId ? "Imported topic" : "Imported map"),
     note: topic.notes?.plain?.content?.trim() || undefined,
     tags: topic.labels?.filter(Boolean)?.length ? topic.labels.filter(Boolean) : undefined,
+    attachments: imageAttachment ? [imageAttachment] : undefined,
     x: 0,
     y: 0,
     children: [],
@@ -659,6 +915,7 @@ function buildImportedNodes(
         rawTopic: cloneJson(topic) as JsonValue,
         importedFillColor: fillColor,
         importedDisplayColor: displayColor,
+        importedPosition: readTopicPosition(topic),
       },
     },
   };
@@ -668,19 +925,28 @@ function buildImportedNodes(
   };
 
   for (const child of asTopics(topic.children?.attached as XMindChildrenBucket)) {
-    const parsedChild = buildImportedNodes(child, id, counter, usedIds, sourceTopicToNodeId, styleLookup);
+    const parsedChild = await buildImportedNodes(
+      child,
+      id,
+      counter,
+      usedIds,
+      sourceTopicToNodeId,
+      styleLookup,
+      resolveImageAttachment
+    );
     node.children.push(parsedChild.rootId);
     Object.assign(nodes, parsedChild.nodes);
   }
 
   for (const floatingChild of asTopics(topic.children?.detached as XMindChildrenBucket)) {
-    const parsedFloating = buildImportedNodes(
+    const parsedFloating = await buildImportedNodes(
       floatingChild,
       null,
       counter,
       usedIds,
       sourceTopicToNodeId,
-      styleLookup
+      styleLookup,
+      resolveImageAttachment
     );
     Object.assign(nodes, parsedFloating.nodes);
   }
@@ -785,13 +1051,15 @@ export async function importFromXmind(
   const usedIds = new Set<string>();
   const sourceTopicToNodeId: Record<string, string> = {};
   const styleLookup = collectStyleLookup(parsed);
-  const parsedRoot = buildImportedNodes(
+  const resolveImageAttachment = createXmindImageResolver(zip);
+  const parsedRoot = await buildImportedNodes(
     rootTopic,
     null,
     counter,
     usedIds,
     sourceTopicToNodeId,
-    styleLookup
+    styleLookup,
+    resolveImageAttachment
   );
   const importedRelationships = importRelationships(
     activeSheet,
@@ -799,7 +1067,7 @@ export async function importFromXmind(
     sourceTopicToNodeId
   );
 
-  return layoutImportedMap({
+  return preserveImportedPositions(layoutImportedMap({
     id: "imported",
     title: safeTitle(activeSheet.title ?? rootTopic.title, fallbackTitle),
     rootId: parsedRoot.rootId,
@@ -826,5 +1094,5 @@ export async function importFromXmind(
         },
       },
     },
-  });
+  }));
 }

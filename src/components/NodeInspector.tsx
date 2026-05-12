@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Image,
   Keyboard,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,10 +13,60 @@ import {
   View,
 } from "react-native";
 import { File } from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 
 import { EdgeStyle, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
+import { isImageAttachment } from "../screens/mapScreen/routing";
+
+function getAttachmentSubtitle(attachment: NodeAttachment) {
+  if (attachment.uri.startsWith("data:")) {
+    return attachment.mimeType || "Embedded attachment";
+  }
+
+  return attachment.uri.length > 90 ? `${attachment.uri.slice(0, 87)}...` : attachment.uri;
+}
+
+function extensionFromMime(mimeType: string | undefined) {
+  switch ((mimeType ?? "").toLowerCase()) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    case "image/bmp":
+      return "bmp";
+    case "image/svg+xml":
+      return "svg";
+    default:
+      return "bin";
+  }
+}
+
+function safeAttachmentFileName(attachment: NodeAttachment) {
+  const base = (attachment.name || "attachment").replace(/[\\/:*?"<>|]/g, "-").trim() || "attachment";
+  return base.includes(".") ? base : `${base}.${extensionFromMime(attachment.mimeType)}`;
+}
+
+async function writeDataAttachmentToCache(attachment: NodeAttachment) {
+  const match = attachment.uri.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+  const base64 = match?.[2] ? match[3] : null;
+  const cacheDir = FileSystem.cacheDirectory;
+  if (!base64 || !cacheDir) {
+    return null;
+  }
+
+  const fileUri = `${cacheDir}${Date.now()}-${safeAttachmentFileName(attachment)}`;
+  await FileSystem.writeAsStringAsync(fileUri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return fileUri;
+}
 
 type Props = {
   node: MindMapNode | null;
@@ -85,6 +137,7 @@ export default function NodeInspector({
   const [tagsDraft, setTagsDraft] = useState("");
   const [dateDraft, setDateDraft] = useState("");
   const [timeDraft, setTimeDraft] = useState("");
+  const [previewAttachment, setPreviewAttachment] = useState<NodeAttachment | null>(null);
 
   const formatDateDraft = (date: Date) => {
     const day = `${date.getDate()}`.padStart(2, "0");
@@ -282,13 +335,19 @@ export default function NodeInspector({
       if (!file?.uri) {
         return;
       }
+      const pickedFile = file as {
+        uri: string;
+        name?: string;
+        type?: string;
+        size?: number;
+      };
 
       onAddAttachment(node.id, {
         id: `a_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        name: file.name || t("inspector.unnamedAttachment"),
-        uri: file.uri,
-        mimeType: file.type || undefined,
-        size: Number.isFinite(file.size) ? file.size : undefined,
+        name: pickedFile.name || t("inspector.unnamedAttachment"),
+        uri: pickedFile.uri,
+        mimeType: pickedFile.type || undefined,
+        size: Number.isFinite(pickedFile.size) ? pickedFile.size : undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
@@ -301,14 +360,77 @@ export default function NodeInspector({
 
   const openAttachment = async (attachment: NodeAttachment) => {
     try {
+      if (isImageAttachment(attachment)) {
+        setPreviewAttachment(attachment);
+        return;
+      }
+
+      if (attachment.uri.startsWith("data:")) {
+        const fileUri = await writeDataAttachmentToCache(attachment);
+        if (!fileUri) {
+          Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
+          return;
+        }
+
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: attachment.mimeType,
+            dialogTitle: attachment.name,
+          });
+          return;
+        }
+
+        const canOpenTemp = await Linking.canOpenURL(fileUri);
+        if (canOpenTemp) {
+          await Linking.openURL(fileUri);
+          return;
+        }
+
+        Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
+        return;
+      }
+
       const canOpen = await Linking.canOpenURL(attachment.uri);
       if (!canOpen) {
-        Alert.alert(t("inspector.attachmentOpenFailed"), attachment.uri);
+        Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
         return;
       }
       await Linking.openURL(attachment.uri);
     } catch {
-      Alert.alert(t("inspector.attachmentOpenFailed"), attachment.uri);
+      Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
+    }
+  };
+
+  const exportAttachment = async (attachment: NodeAttachment) => {
+    try {
+      const uri = attachment.uri.startsWith("data:")
+        ? await writeDataAttachmentToCache(attachment)
+        : attachment.uri;
+
+      if (!uri) {
+        Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
+        return;
+      }
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: attachment.mimeType,
+          dialogTitle: attachment.name,
+        });
+        return;
+      }
+
+      const canOpen = await Linking.canOpenURL(uri);
+      if (canOpen) {
+        await Linking.openURL(uri);
+        return;
+      }
+
+      Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
+    } catch {
+      Alert.alert(t("inspector.attachmentOpenFailed"), attachment.name);
     }
   };
 
@@ -334,18 +456,19 @@ export default function NodeInspector({
       : "—";
 
   return (
-    <View
-      style={isSide ? [s.side, isDark && s.sideDark, { width: panelWidth }] : [s.sheet, isDark && s.sheetDark]}
-      onLayout={(event) => {
-        if (isSide) {
-          onHeight(0);
-          return;
-        }
+    <>
+      <View
+        style={isSide ? [s.side, isDark && s.sideDark, { width: panelWidth }] : [s.sheet, isDark && s.sheetDark]}
+        onLayout={(event) => {
+          if (isSide) {
+            onHeight(0);
+            return;
+          }
 
-        const nextHeight = event.nativeEvent.layout.height;
-        onHeight(nextHeight);
-      }}
-    >
+          const nextHeight = event.nativeEvent.layout.height;
+          onHeight(nextHeight);
+        }}
+      >
       <View style={s.header}>
         <View />
         <View style={s.headerActions}>
@@ -475,7 +598,7 @@ export default function NodeInspector({
                       {attachment.name}
                     </Text>
                     <Text numberOfLines={1} style={[s.attachmentUri, isDark && s.attachmentUriDark]}>
-                      {attachment.uri}
+                      {getAttachmentSubtitle(attachment)}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -754,7 +877,48 @@ export default function NodeInspector({
           </View>
         </View>
       </ScrollView>
-    </View>
+      </View>
+
+      <Modal
+        visible={!!previewAttachment}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewAttachment(null)}
+      >
+        <View style={s.previewBackdrop}>
+          <View style={[s.previewPanel, isDark && s.previewPanelDark]}>
+            <View style={s.previewHeader}>
+              <Text numberOfLines={1} style={[s.previewTitle, isDark && s.previewTitleDark]}>
+                {previewAttachment?.name ?? ""}
+              </Text>
+              <Pressable
+                onPress={() => setPreviewAttachment(null)}
+                style={({ pressed }) => [s.closeButton, isDark && s.closeButtonDark, pressed && s.pressed]}
+              >
+                <Text style={[s.closeButtonText, isDark && s.closeButtonTextDark]}>{t("common.close")}</Text>
+              </Pressable>
+            </View>
+
+            {previewAttachment ? (
+              <Image
+                source={{ uri: previewAttachment.uri }}
+                resizeMode="contain"
+                style={s.previewImage}
+              />
+            ) : null}
+
+            {previewAttachment ? (
+              <Pressable
+                onPress={() => exportAttachment(previewAttachment)}
+                style={({ pressed }) => [s.previewExportButton, pressed && s.pressed]}
+              >
+                <Text style={s.previewExportText}>{t("maps.export")}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -1167,6 +1331,57 @@ const s = StyleSheet.create({
   },
   stepValueDark: {
     color: "#f8fafc",
+  },
+  previewBackdrop: {
+    flex: 1,
+    padding: 18,
+    backgroundColor: "rgba(2,6,23,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewPanel: {
+    width: "100%",
+    maxWidth: 720,
+    maxHeight: "88%",
+    borderRadius: 18,
+    padding: 14,
+    gap: 12,
+    backgroundColor: "#ffffff",
+  },
+  previewPanelDark: {
+    backgroundColor: "#020617",
+  },
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  previewTitle: {
+    flex: 1,
+    color: "#111827",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  previewTitleDark: {
+    color: "#f8fafc",
+  },
+  previewImage: {
+    width: "100%",
+    height: 420,
+    borderRadius: 12,
+    backgroundColor: "#0f172a",
+  },
+  previewExportButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "#0ea5e9",
+  },
+  previewExportText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "800",
   },
   pressed: {
     opacity: 0.82,

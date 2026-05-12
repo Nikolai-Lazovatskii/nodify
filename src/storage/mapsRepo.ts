@@ -2,6 +2,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MindMap } from "../types/map";
 import { exportXmind } from "../export/doExportXmind";
 import { supabase } from "../lib/supabase";
+import { cloudGetMap, cloudListMaps, cloudSoftDeleteMap, cloudUpsertMap } from "./cloudMapsRepo";
+import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
 
 export type MapMeta = {
   id: string;
@@ -9,6 +11,7 @@ export type MapMeta = {
   createdAt: number;
   updatedAt: number;
   schemaVersion: number;
+  storage?: "cloud" | "local";
 };
 
 const INDEX_KEY = "nodify:maps:index:v1";
@@ -35,6 +38,101 @@ async function writeIndex(items: MapMeta[]) {
   await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(items));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function numberedTitle(baseTitle: string, number: number): string {
+  return `${baseTitle} ${number}`;
+}
+
+async function getMapsForTitleNumbering(userId: string | null): Promise<MapMeta[]> {
+  const localItems = await readIndex();
+
+  if (!userId) {
+    return localItems;
+  }
+
+  try {
+    const rows = await cloudListMaps();
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title ?? "Untitled",
+      createdAt: isoToMs(row.created_at),
+      updatedAt: isoToMs(row.updated_at),
+      schemaVersion: row.schema_version ?? SCHEMA_VERSION,
+      storage: "cloud",
+    }));
+  } catch {
+    return localItems;
+  }
+}
+
+async function getNextMapTitle(baseTitle: string, userId: string | null): Promise<string> {
+  const trimmedBase = baseTitle.trim() || "New mind map";
+  const existing = await getMapsForTitleNumbering(userId);
+  const titlePattern = new RegExp(`^${escapeRegExp(trimmedBase)}(?:\\s+(\\d+))?$`, "i");
+  const usedNumbers = new Set<number>();
+
+  for (const item of existing) {
+    const match = item.title.trim().match(titlePattern);
+    if (!match) {
+      continue;
+    }
+
+    usedNumbers.add(match[1] ? Number(match[1]) : 1);
+  }
+
+  let nextNumber = 1;
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber += 1;
+  }
+
+  return numberedTitle(trimmedBase, nextNumber);
+}
+
+async function writeLocalMap(map: MindMap, storage: "cloud" | "local", createdAt?: number) {
+  const now = Date.now();
+  await AsyncStorage.setItem(
+    DOC_KEY(map.id),
+    JSON.stringify({ schemaVersion: SCHEMA_VERSION, map })
+  );
+
+  const index = await readIndex();
+  const i = index.findIndex((m) => m.id === map.id);
+
+  if (i >= 0) {
+    index[i] = {
+      ...index[i],
+      title: map.title || "Untitled",
+      updatedAt: now,
+      schemaVersion: SCHEMA_VERSION,
+      storage,
+    };
+  } else {
+    index.unshift({
+      id: map.id,
+      title: map.title || "Untitled",
+      createdAt: createdAt ?? now,
+      updatedAt: now,
+      schemaVersion: SCHEMA_VERSION,
+      storage,
+    });
+  }
+
+  await writeIndex(index);
+}
+
+export async function getLocalMap(id: string): Promise<MindMap | null> {
+  const raw = await AsyncStorage.getItem(DOC_KEY(id));
+  const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
+  return doc?.map ?? null;
+}
+
+export async function cacheCloudMap(map: MindMap, createdAt?: number): Promise<void> {
+  await writeLocalMap(map, "cloud", createdAt);
+}
+
 function uuidv4(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -44,6 +142,10 @@ function uuidv4(): string {
 }
 
 async function getUserId(): Promise<string | null> {
+  const session = await supabase.auth.getSession();
+  const sessionUserId = session.data.session?.user?.id;
+  if (sessionUserId) return sessionUserId;
+
   const { data, error } = await supabase.auth.getUser();
   if (error) return null;
   return data.user?.id ?? null;
@@ -57,37 +159,60 @@ function isoToMs(iso: string | null | undefined): number {
 
 export async function listMaps(): Promise<MapMeta[]> {
   const userId = await getUserId();
+  const localItems = await readIndex();
+  const normalizedLocalItems = localItems
+    .map((item) => ({ ...item, storage: item.storage ?? ("local" as const) }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   if (userId) {
-    const { data, error } = await supabase
-      .from("mind_maps")
-      .select("id,title,created_at,updated_at")
-      .order("updated_at", { ascending: false });
-
-    if (error) throw error;
-
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      title: row.title ?? "Untitled",
-      createdAt: isoToMs(row.created_at),
-      updatedAt: isoToMs(row.updated_at),
-      schemaVersion: SCHEMA_VERSION,
-    }));
+    try {
+      const rows = await cloudListMaps();
+      const cloudItems = rows.map((row) => ({
+        id: row.id,
+        title: row.title ?? "Untitled",
+        createdAt: isoToMs(row.created_at),
+        updatedAt: isoToMs(row.updated_at),
+        schemaVersion: row.schema_version ?? SCHEMA_VERSION,
+        storage: "cloud" as const,
+      }));
+      const cloudIds = new Set(cloudItems.map((item) => item.id));
+      return [
+        ...cloudItems,
+        ...normalizedLocalItems.filter((item) => !cloudIds.has(item.id)),
+      ].sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch {
+      throw new Error("Cloud maps unavailable");
+    }
   }
 
-  const items = await readIndex();
-  return items.sort((a, b) => b.updatedAt - a.updatedAt);
+  return normalizedLocalItems;
 }
 
-export async function createMap(title = "New mind map", rootTitle = "Root"): Promise<MindMap> {
+export async function listLocalMaps(): Promise<MapMeta[]> {
+  const items = await readIndex();
+  return items
+    .map((item) => ({ ...item, storage: item.storage ?? "local" }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+type CreateMapOptions = {
+  numberedTitle?: boolean;
+};
+
+export async function createMap(
+  title = "New mind map",
+  rootTitle = "Root",
+  options: CreateMapOptions = {}
+): Promise<MindMap> {
   const userId = await getUserId();
   const now = Date.now();
+  const nextTitle = options.numberedTitle ? await getNextMapTitle(title, userId) : title;
 
   const id = uuidv4();
 
   const map: MindMap = {
     id,
-    title,
+    title: nextTitle,
     rootId: "root",
     edges: [],
     nodes: {
@@ -96,31 +221,16 @@ export async function createMap(title = "New mind map", rootTitle = "Root"): Pro
   };
 
   if (userId) {
-    const { error } = await supabase.from("mind_maps").insert({
-      id,
-      user_id: userId,
-      title: map.title || "Untitled",
-      map,
-      created_at: new Date(now).toISOString(),
-      updated_at: new Date(now).toISOString(),
-    });
-
-    if (error) throw error;
+    try {
+      await cloudUpsertMap(map, SCHEMA_VERSION);
+      await writeLocalMap(map, "cloud", now);
+    } catch {
+      await writeLocalMap(map, "local", now);
+    }
     return map;
   }
 
-  const meta: MapMeta = {
-    id,
-    title,
-    createdAt: now,
-    updatedAt: now,
-    schemaVersion: SCHEMA_VERSION,
-  };
-
-  await AsyncStorage.setItem(DOC_KEY(id), JSON.stringify({ schemaVersion: SCHEMA_VERSION, map }));
-
-  const index = await readIndex();
-  await writeIndex([meta, ...index.filter((m) => m.id !== id)]);
+  await writeLocalMap(map, "local", now);
 
   return map;
 }
@@ -129,70 +239,52 @@ export async function getMap(id: string): Promise<MindMap | null> {
   const userId = await getUserId();
 
   if (userId) {
-    const { data, error } = await supabase
-      .from("mind_maps")
-      .select("map")
-      .eq("id", id)
-      .maybeSingle();
+    try {
+      const row = await cloudGetMap(id);
+      if (row?.doc) {
+        await writeLocalMap(row.doc, "cloud");
+        return row.doc;
+      }
+    } catch {
+      const raw = await AsyncStorage.getItem(DOC_KEY(id));
+      const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
+      return doc?.map ?? null;
+    }
 
-    if (error) throw error;
-    return (data?.map as MindMap) ?? null;
+    return getLocalMap(id);
   }
 
-  const raw = await AsyncStorage.getItem(DOC_KEY(id));
-  const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
-  return doc?.map ?? null;
+  return getLocalMap(id);
 }
 
 export async function saveMap(map: MindMap): Promise<void> {
   const userId = await getUserId();
-  const nowIso = new Date().toISOString();
+  const mapToSave = layoutStructuredMap(map);
 
   if (userId) {
-    const { error } = await supabase
-      .from("mind_maps")
-      .update({
-        title: map.title || "Untitled",
-        map,
-        updated_at: nowIso,
-      })
-      .eq("id", map.id);
-
-    if (error) throw error;
+    try {
+      await cloudUpsertMap(mapToSave, SCHEMA_VERSION);
+      await writeLocalMap(mapToSave, "cloud");
+    } catch {
+      await writeLocalMap(mapToSave, "local");
+    }
     return;
   }
 
-  const now = Date.now();
-
-  await AsyncStorage.setItem(
-    DOC_KEY(map.id),
-    JSON.stringify({ schemaVersion: SCHEMA_VERSION, map })
-  );
-
-  const index = await readIndex();
-  const i = index.findIndex((m) => m.id === map.id);
-
-  if (i >= 0) {
-    index[i] = { ...index[i], title: map.title || "Untitled", updatedAt: now };
-  } else {
-    index.unshift({
-      id: map.id,
-      title: map.title || "Untitled",
-      createdAt: now,
-      updatedAt: now,
-      schemaVersion: SCHEMA_VERSION,
-    });
-  }
-
-  await writeIndex(index);
+  await writeLocalMap(mapToSave, "local");
 }
 
 export async function deleteMap(id: string): Promise<void> {
   const userId = await getUserId();
 
   if (userId) {
-    const { error } = await supabase.from("mind_maps").delete().eq("id", id);
-    if (error) throw error;
+    try {
+      await cloudSoftDeleteMap(id);
+    } catch {
+    }
+    await AsyncStorage.removeItem(DOC_KEY(id));
+    const index = await readIndex();
+    await writeIndex(index.filter((m) => m.id !== id));
     return;
   }
 

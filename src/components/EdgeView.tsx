@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useRef } from "react";
 import { Platform } from "react-native";
-import { G, Path } from "react-native-svg";
+import { G, Path, Polygon } from "react-native-svg";
 
 import { EdgeStyle } from "../types/map";
 
@@ -17,6 +17,8 @@ type Props = {
   onPress?: () => void;
   onLongPress?: () => void;
   hitSlopWidth?: number;
+  endArrow?: boolean;
+  endArrowTargetBounds?: { halfW: number; halfH: number };
 };
 
 function makePath(points: EdgePoint[]) {
@@ -70,6 +72,62 @@ function makePath(points: EdgePoint[]) {
   return commands.join(" ");
 }
 
+function makeArrowPoints(
+  points: EdgePoint[],
+  width: number,
+  targetBounds?: { halfW: number; halfH: number }
+) {
+  if (points.length < 2) {
+    return null;
+  }
+
+  const tip = points[points.length - 1];
+  let base = points[points.length - 2];
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const candidate = points[index];
+    if (candidate.x !== tip.x || candidate.y !== tip.y) {
+      base = candidate;
+      break;
+    }
+  }
+
+  const dx = tip.x - base.x;
+  const dy = tip.y - base.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 0) {
+    return null;
+  }
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+  const targetInset = targetBounds
+    ? 1 / Math.sqrt(
+        (ux * ux) / Math.max(1, targetBounds.halfW * targetBounds.halfW) +
+          (uy * uy) / Math.max(1, targetBounds.halfH * targetBounds.halfH)
+      )
+    : 0;
+  const visibleTip = {
+    x: tip.x - ux * (targetInset + 3),
+    y: tip.y - uy * (targetInset + 3),
+  };
+  const arrowLength = Math.max(12, width * 5.5);
+  const arrowWidth = Math.max(8, width * 3.8);
+  const backX = visibleTip.x - ux * arrowLength;
+  const backY = visibleTip.y - uy * arrowLength;
+
+  return [
+    visibleTip,
+    { x: backX + px * (arrowWidth / 2), y: backY + py * (arrowWidth / 2) },
+    { x: backX - px * (arrowWidth / 2), y: backY - py * (arrowWidth / 2) },
+  ];
+}
+
+function pointsToPolygon(points: EdgePoint[]) {
+  return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
 function EdgeView({
   from,
   to,
@@ -81,14 +139,18 @@ function EdgeView({
   onPress,
   onLongPress,
   hitSlopWidth = 20,
+  endArrow = false,
+  endArrowTargetBounds,
 }: Props) {
   const allowSvgTouch = Platform.OS !== "android";
   const stroke = selected ? "#0ea5e9" : color;
   const strokeWidth = selected ? width + 2 : width;
   const pathPoints = points && points.length >= 2 ? points : [from, to];
   const pathD = makePath(pathPoints);
+  const arrowPoints = endArrow ? makeArrowPoints(pathPoints, strokeWidth, endArrowTargetBounds) : null;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggeredRef = useRef(false);
+  const hasTouchHandlers = allowSvgTouch && (!!onPress || !!onLongPress);
 
   useEffect(() => {
     return () => {
@@ -100,51 +162,41 @@ function EdgeView({
 
   return (
     <G>
-      <Path
-        d={pathD}
-        stroke="rgba(15,23,42,0.01)"
-        strokeWidth={hitSlopWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        onPressIn={
-          allowSvgTouch
-            ? () => {
-                longPressTriggeredRef.current = false;
-                if (longPressTimer.current) {
-                  clearTimeout(longPressTimer.current);
-                }
-                if (onLongPress) {
-                  longPressTimer.current = setTimeout(() => {
-                    longPressTriggeredRef.current = true;
-                    onLongPress();
-                  }, 360);
-                }
-              }
-            : undefined
-        }
-        onPressOut={
-          allowSvgTouch
-            ? () => {
-                if (longPressTimer.current) {
-                  clearTimeout(longPressTimer.current);
-                  longPressTimer.current = null;
-                }
-              }
-            : undefined
-        }
-        onPress={
-          allowSvgTouch
-            ? (event) => {
-                event.stopPropagation?.();
-                if (!longPressTriggeredRef.current) {
-                  onPress?.();
-                }
-                longPressTriggeredRef.current = false;
-              }
-            : undefined
-        }
-      />
+      {hasTouchHandlers && hitSlopWidth > 0 ? (
+        <Path
+          d={pathD}
+          stroke="rgba(15,23,42,0.01)"
+          strokeWidth={hitSlopWidth}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          onPressIn={() => {
+            longPressTriggeredRef.current = false;
+            if (longPressTimer.current) {
+              clearTimeout(longPressTimer.current);
+            }
+            if (onLongPress) {
+              longPressTimer.current = setTimeout(() => {
+                longPressTriggeredRef.current = true;
+                onLongPress();
+              }, 360);
+            }
+          }}
+          onPressOut={() => {
+            if (longPressTimer.current) {
+              clearTimeout(longPressTimer.current);
+              longPressTimer.current = null;
+            }
+          }}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            if (!longPressTriggeredRef.current) {
+              onPress?.();
+            }
+            longPressTriggeredRef.current = false;
+          }}
+        />
+      ) : null}
       <Path
         d={pathD}
         stroke={stroke}
@@ -154,15 +206,24 @@ function EdgeView({
         strokeLinejoin="round"
         fill="none"
         onPress={
-          allowSvgTouch
+          hasTouchHandlers
             ? (event) => {
                 event.stopPropagation?.();
                 onPress?.();
               }
             : undefined
         }
-        onLongPress={allowSvgTouch ? () => onLongPress?.() : undefined}
+        onLongPress={hasTouchHandlers ? () => onLongPress?.() : undefined}
       />
+      {arrowPoints ? (
+        <Polygon
+          points={pointsToPolygon(arrowPoints)}
+          fill={stroke}
+          stroke={stroke}
+          strokeWidth={Math.max(1, strokeWidth * 0.45)}
+          strokeLinejoin="round"
+        />
+      ) : null}
     </G>
   );
 }
@@ -180,7 +241,10 @@ export default memo(EdgeView, (prev, next) => {
     prev.selected === next.selected &&
     prev.onPress === next.onPress &&
     prev.onLongPress === next.onLongPress &&
-    prev.hitSlopWidth === next.hitSlopWidth
+    prev.hitSlopWidth === next.hitSlopWidth &&
+    prev.endArrow === next.endArrow &&
+    prev.endArrowTargetBounds?.halfW === next.endArrowTargetBounds?.halfW &&
+    prev.endArrowTargetBounds?.halfH === next.endArrowTargetBounds?.halfH
   );
 });
 

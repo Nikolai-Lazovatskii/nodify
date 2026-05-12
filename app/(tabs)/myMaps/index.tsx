@@ -1,6 +1,7 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   FlatList,
   InteractionManager,
   Modal,
@@ -16,7 +17,9 @@ import {
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useAuth } from "@/src/auth/AuthProvider";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { MaterialIcons } from "@expo/vector-icons";
 
 import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
@@ -30,21 +33,25 @@ import {
   deleteMap,
   exportMapXmind,
   getMap,
+  listLocalMaps,
   listMaps,
   renameMap,
   saveMap,
 } from "@/src/storage/mapsRepo";
+import { syncMapsOnce } from "@/src/storage/syncMaps";
 
 type MapMeta = {
   id: string;
   title: string;
   updatedAt?: number;
+  storage?: "cloud" | "local";
 };
 
 export default function MyMapsIndex() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
+  const { user, loading: authLoading, syncing, lastSyncAt } = useAuth();
   const colorScheme = useColorScheme() ?? "light";
   const isDark = colorScheme === "dark";
 
@@ -53,6 +60,9 @@ export default function MyMapsIndex() {
 
   const [items, setItems] = useState<MapMeta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listSyncing, setListSyncing] = useState(false);
+  const [offline, setOffline] = useState(false);
+  const [syncToastVisible, setSyncToastVisible] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState<string>("");
@@ -68,21 +78,77 @@ export default function MyMapsIndex() {
     ? 16 + Math.max(insets.left, insets.right)
     : 16;
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (showLoading = true, runSyncAfter = true) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
       const list = await listMaps();
       setItems(list as MapMeta[]);
+      setOffline(false);
+      if (user && runSyncAfter) {
+        setListSyncing(true);
+        syncMapsOnce()
+          .then(() => reload(false, false))
+          .catch(() => {})
+          .finally(() => {
+            setListSyncing(false);
+          });
+      }
+    } catch {
+      if (user) {
+        const localList = await listLocalMaps();
+        setItems(localList as MapMeta[]);
+        setOffline(true);
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [user]);
 
   useFocusEffect(
     useCallback(() => {
-      reload();
-    }, [reload])
+      if (!authLoading) {
+        reload();
+      }
+    }, [authLoading, reload])
   );
+
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    void reload();
+  }, [authLoading, reload, user?.id]);
+
+  useEffect(() => {
+    if (!user || !lastSyncAt) {
+      return;
+    }
+
+    void reload(false);
+    setSyncToastVisible(true);
+    const timer = setTimeout(() => {
+      setSyncToastVisible(false);
+    }, 2600);
+
+    return () => clearTimeout(timer);
+  }, [lastSyncAt, reload, user]);
+
+  useEffect(() => {
+    if (!user || !offline) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      reload(false);
+    }, 10000);
+
+    return () => clearInterval(timer);
+  }, [offline, reload, user]);
 
   const openMap = useCallback(
     (id: string) => {
@@ -185,7 +251,7 @@ export default function MyMapsIndex() {
 
   const importMm = useCallback(async () => {
     try {
-      const picked = await File.pickFileAsync(undefined, "text/xml");
+      const picked = await File.pickFileAsync();
       const pickedFile = Array.isArray(picked) ? picked[0] : picked;
       if (!pickedFile) {
         return;
@@ -271,6 +337,7 @@ export default function MyMapsIndex() {
     return [...items].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }, [items]);
 
+  const showSynchronizing = sortedItems.length === 0 && (authLoading || loading || syncing || listSyncing);
   const numColumns = isLandscape ? 2 : 1;
 
   const runPendingExport = useCallback(() => {
@@ -325,9 +392,20 @@ export default function MyMapsIndex() {
       >
         <View style={s.headerRow}>
           <Text style={[s.headerTitle, isDark && s.headerTitleDark]}>{t("maps.title")}</Text>
-          <Pressable onPress={() => setImportVisible(true)} style={({ pressed }) => [s.importButton, pressed && s.pressedBtn]}>
-            <Text style={s.importButtonText}>{t("maps.import")}</Text>
-          </Pressable>
+          <View style={s.headerActions}>
+            {user ? (
+              <View style={[s.syncBadge, isDark && s.syncBadgeDark]}>
+                <MaterialIcons
+                  name={syncing ? "sync" : offline ? "cloud-off" : "cloud-done"}
+                  size={16}
+                  color={syncing ? "#0284c7" : offline ? "#b45309" : "#0369a1"}
+                />
+              </View>
+            ) : null}
+            <Pressable onPress={() => setImportVisible(true)} style={({ pressed }) => [s.importButton, pressed && s.pressedBtn]}>
+              <Text style={s.importButtonText}>{t("maps.import")}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -348,8 +426,21 @@ export default function MyMapsIndex() {
         onRefresh={reload}
         numColumns={numColumns}
         columnWrapperStyle={isLandscape ? s.columns : undefined}
+        ListHeaderComponent={
+          user && offline ? (
+            <View style={[s.offlineBanner, isDark && s.offlineBannerDark]}>
+              <MaterialIcons name="cloud-off" size={17} color={isDark ? "#fbbf24" : "#b45309"} />
+              <Text style={[s.offlineText, isDark && s.offlineTextDark]}>{t("maps.offlineLocalData")}</Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
-          !loading ? (
+          showSynchronizing ? (
+            <View style={s.syncEmpty}>
+              <ActivityIndicator color={isDark ? "#7dd3fc" : "#0284c7"} />
+              <Text style={[s.syncEmptyTitle, isDark && s.syncEmptyTitleDark]}>{t("maps.synchronizing")}</Text>
+            </View>
+          ) : !loading ? (
             <View style={s.empty}>
               <Text style={[s.emptyTitle, isDark && s.emptyTitleDark]}>{t("maps.noMaps")}</Text>
               <Text style={[s.emptyText, isDark && s.emptyTextDark]}>{t("maps.createOneUsingCreate")}</Text>
@@ -394,6 +485,15 @@ export default function MyMapsIndex() {
               <Text style={[s.meta, isDark && s.metaDark]}>
                 {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ""}
               </Text>
+              {item.storage === "cloud" ? (
+                <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
+                  <MaterialIcons name="cloud-done" size={15} color={isDark ? "#7dd3fc" : "#0369a1"} />
+                </View>
+              ) : user ? (
+                <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
+                  <MaterialIcons name="smartphone" size={15} color={isDark ? "#cbd5e1" : "#64748b"} />
+                </View>
+              ) : null}
             </View>
 
             <View style={s.actionsRow}>
@@ -425,6 +525,13 @@ export default function MyMapsIndex() {
           </Pressable>
         )}
       />
+
+      {user && syncToastVisible && !offline ? (
+        <View style={[s.toast, isDark && s.toastDark, { bottom: Math.max(insets.bottom, 16) + 10 }]}>
+          <MaterialIcons name="cloud-done" size={16} color="#ffffff" />
+          <Text style={s.toastText}>{t("maps.mapsSynced")}</Text>
+        </View>
+      ) : null}
 
       <Modal
         visible={importVisible}
@@ -583,6 +690,25 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  syncBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(2,132,199,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(2,132,199,0.14)",
+  },
+  syncBadgeDark: {
+    backgroundColor: "rgba(14,165,233,0.10)",
+    borderColor: "rgba(56,189,248,0.20)",
+  },
   importButton: {
     minWidth: 108,
     height: 40,
@@ -599,6 +725,31 @@ const s = StyleSheet.create({
   },
   listContent: { paddingTop: 16, gap: 12 },
   listContentLandscape: { paddingTop: 14 },
+  offlineBanner: {
+    minHeight: 42,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(245,158,11,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.24)",
+  },
+  offlineBannerDark: {
+    backgroundColor: "rgba(245,158,11,0.12)",
+    borderColor: "rgba(251,191,36,0.24)",
+  },
+  offlineText: {
+    flex: 1,
+    color: "#92400e",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  offlineTextDark: {
+    color: "#fbbf24",
+  },
   columns: { gap: 12 },
   card: {
     flex: 1,
@@ -649,6 +800,20 @@ const s = StyleSheet.create({
   titleDark: { color: "#f8fafc" },
   meta: { fontSize: 12, color: "rgba(15,23,42,0.55)", fontWeight: "600" },
   metaDark: { color: "rgba(226,232,240,0.65)" },
+  storageBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(2,132,199,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(2,132,199,0.12)",
+  },
+  storageBadgeDark: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.10)",
+  },
   actionsRow: { flexDirection: "row", gap: 10 },
   actionBtn: {
     flex: 1,
@@ -672,11 +837,48 @@ const s = StyleSheet.create({
   },
   dangerText: { color: "#b91c1c" },
   pressedBtn: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  syncEmpty: {
+    minHeight: 260,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  syncEmptyTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0369a1",
+  },
+  syncEmptyTitleDark: {
+    color: "#7dd3fc",
+  },
   empty: { paddingTop: 24, alignItems: "center", gap: 6 },
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
   emptyTitleDark: { color: "#f8fafc" },
   emptyText: { fontSize: 13, color: "rgba(15,23,42,0.6)", fontWeight: "600" },
   emptyTextDark: { color: "#94a3b8" },
+  toast: {
+    position: "absolute",
+    alignSelf: "center",
+    minHeight: 40,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(15,23,42,0.92)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  toastDark: {
+    backgroundColor: "rgba(2,6,23,0.94)",
+  },
+  toastText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
 });
 
 const sheet = StyleSheet.create({

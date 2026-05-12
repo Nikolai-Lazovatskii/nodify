@@ -1,4 +1,5 @@
 import { MindMap, MindMapNode, RelationshipEdge } from "../types/map";
+import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
 import templateContent from "./templates/content.json";
 
 function escapeText(s: string) {
@@ -215,6 +216,15 @@ function applyManagedLabels(targetTopic: Record<string, unknown>, node: MindMapN
   }
 }
 
+function applyManagedTopicPosition(targetTopic: Record<string, unknown>, node: MindMapNode) {
+  const rawPosition = asRecord(targetTopic.position);
+  targetTopic.position = {
+    ...(rawPosition ?? {}),
+    x: node.x,
+    y: node.y,
+  };
+}
+
 function setTopicsBucket(
   nextChildren: Record<string, unknown>,
   key: "attached" | "detached",
@@ -250,6 +260,7 @@ function buildTopic(
   const topic = getBaseTopic(node);
   topic.id = node.id;
   topic.title = escapeText(node.title);
+  applyManagedTopicPosition(topic, node);
   applyManagedNote(topic, node.note);
   applyManagedLabels(topic, node);
 
@@ -399,28 +410,29 @@ function buildRelationships(
 }
 
 export function exportToXmindZenContentJson(map: MindMap): string {
-  if (!map.nodes[map.rootId]) throw new Error("Root node not found");
+  const exportMap = layoutStructuredMap(map);
+  if (!exportMap.nodes[exportMap.rootId]) throw new Error("Root node not found");
 
-  const importedRawContent = map.importedFormat?.vendor?.xmind?.rawContent;
+  const importedRawContent = exportMap.importedFormat?.vendor?.xmind?.rawContent;
   const baseContent =
     typeof importedRawContent === "undefined" ? clone(templateContent) : clone(importedRawContent);
-  const preferredIndex = map.importedFormat?.vendor?.xmind?.rawSheetIndex ?? 0;
+  const preferredIndex = exportMap.importedFormat?.vendor?.xmind?.rawSheetIndex ?? 0;
   const { sheet, contentRoot } = getOrCreateSheet(baseContent, preferredIndex);
   const rootKey = getRootTopicKey(sheet);
   const existingRoot = asRecord(sheet[rootKey]) ?? asRecord(sheet.rootTopic) ?? asRecord(sheet.root) ?? {};
   const templateRoot = Object.keys(existingRoot).length > 0 ? existingRoot : getTemplateRootTopic(sheet);
 
   const detachedTopicsByParent = new Map<string, unknown[]>();
-  const floatingTopics = Object.values(map.nodes)
-    .filter((node) => node.parentId === null && node.id !== map.rootId)
-    .map((node) => buildTopic(map, node.id, new Set([map.rootId]), detachedTopicsByParent))
+  const floatingTopics = Object.values(exportMap.nodes)
+    .filter((node) => node.parentId === null && node.id !== exportMap.rootId)
+    .map((node) => buildTopic(exportMap, node.id, new Set([exportMap.rootId]), detachedTopicsByParent))
     .filter(Boolean) as Record<string, unknown>[];
-  detachedTopicsByParent.set(map.rootId, floatingTopics);
+  detachedTopicsByParent.set(exportMap.rootId, floatingTopics);
 
-  const rootTopic = buildTopic(map, map.rootId, new Set(), detachedTopicsByParent);
+  const rootTopic = buildTopic(exportMap, exportMap.rootId, new Set(), detachedTopicsByParent);
   if (!rootTopic) throw new Error("Failed to build root topic");
 
-  sheet.title = escapeText(map.title || "Untitled");
+  sheet.title = escapeText(exportMap.title || "Untitled");
   // Keep rich, unsupported fields from source root topic while updating managed fields.
   sheet[rootKey] = { ...clone(templateRoot), ...rootTopic };
   if (rootKey === "rootTopic") {
@@ -429,7 +441,7 @@ export function exportToXmindZenContentJson(map: MindMap): string {
     delete sheet.rootTopic;
   }
 
-  const relationships = buildRelationships(map, sheet);
+  const relationships = buildRelationships(exportMap, sheet);
   if (relationships.length > 0) {
     sheet.relationships = relationships;
   } else {
