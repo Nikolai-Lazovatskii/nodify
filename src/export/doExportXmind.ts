@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/export/doExportXmind.ts
+ * Abstrakt: Vytvára súbor XMind a spúšťa zdieľanie alebo uloženie exportu v systéme.
+ */
 import JSZip from "jszip";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -21,10 +25,8 @@ export async function exportXmind(map: MindMap, dialogTitle = "Export XMind"): P
     throw new Error("FileSystem cache/document directory is not available");
   }
 
-  // 1) Build content.json for modern XMind (JSON-based format)
   const contentJson = exportToXmindZenContentJson(map);
 
-  // 2) Assemble .xmind (zip container)
   const zip = new JSZip();
   const rawManifest = map.importedFormat?.vendor?.xmind?.rawManifest;
   const rawMetadata = map.importedFormat?.vendor?.xmind?.rawMetadata;
@@ -34,16 +36,13 @@ export async function exportXmind(map: MindMap, dialogTitle = "Export XMind"): P
 
   const zipBase64 = await zip.generateAsync({ type: "base64" });
 
-  // 3) Write file to app documents
   const fileName = `${safeFileName(map.title)}-${map.id}.xmind`;
   const outUri = baseDir.endsWith("/") ? baseDir + fileName : baseDir + "/" + fileName;
 
   await FileSystem.writeAsStringAsync(outUri, zipBase64, {
-    // Legacy FileSystem supports base64 for binary blobs.
     encoding: FileSystem.EncodingType.Base64,
   });
 
-  // 4) Share / Save to Files
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) {
     throw new Error("Sharing is not available on this device");

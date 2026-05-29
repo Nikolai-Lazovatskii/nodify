@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/export/xmind.ts
+ * Abstrakt: Prevádza internú myšlienkovú mapu do štruktúr a súborov formátu XMind.
+ */
 import { MindMap, MindMapNode, RelationshipEdge } from "../types/map";
 import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
 import templateContent from "./templates/content.json";
@@ -161,15 +165,17 @@ function applyManagedNote(targetTopic: Record<string, unknown>, note: string | u
   }
 }
 
-function getTemplateSheet(content: any) {
-  if (Array.isArray(content) && content.length > 0) return content[0];
-  if (content && Array.isArray(content.sheets) && content.sheets.length > 0) return content.sheets[0];
+function getTemplateSheet(content: unknown): Record<string, unknown> {
+  if (Array.isArray(content) && isRecord(content[0])) return content[0];
+  if (isRecord(content) && Array.isArray(content.sheets) && isRecord(content.sheets[0])) {
+    return content.sheets[0];
+  }
   throw new Error("Unsupported template content.json structure");
 }
 
-function getTemplateRootTopic(sheet: any) {
-  if (sheet?.rootTopic) return sheet.rootTopic;
-  if (sheet?.root) return sheet.root;
+function getTemplateRootTopic(sheet: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(sheet.rootTopic)) return sheet.rootTopic;
+  if (isRecord(sheet.root)) return sheet.root;
   throw new Error("Template sheet has no rootTopic");
 }
 
@@ -433,8 +439,12 @@ export function exportToXmindZenContentJson(map: MindMap): string {
   if (!rootTopic) throw new Error("Failed to build root topic");
 
   sheet.title = escapeText(exportMap.title || "Untitled");
-  // Keep rich, unsupported fields from source root topic while updating managed fields.
-  sheet[rootKey] = { ...clone(templateRoot), ...rootTopic };
+
+  const nextRootTopic = { ...clone(templateRoot), ...rootTopic };
+  if (!("children" in rootTopic)) {
+    delete nextRootTopic.children;
+  }
+  sheet[rootKey] = nextRootTopic;
   if (rootKey === "rootTopic") {
     delete sheet.root;
   } else {

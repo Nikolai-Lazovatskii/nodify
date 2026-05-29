@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/SettingsScreen.tsx
+ * Abstrakt: Zobrazuje obrazovku nastavení aplikácie.
+ */
 import { View, Text, StyleSheet } from 'react-native';
 
 export default function SettingsScreen() {

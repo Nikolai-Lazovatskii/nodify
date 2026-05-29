@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/import/xmind.ts
+ * Abstrakt: Parsuje formát XMind a prevádza jeho obsah na internú myšlienkovú mapu.
+ */
 import JSZip from "jszip";
 
 import { JsonValue, MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
@@ -290,7 +294,11 @@ function readFillColorFromNestedObject(root: unknown): string | undefined {
       }
 
       if (maybeColors.length > 0) {
-        const keyLooksColor = key.toLowerCase().includes("fill") || key.toLowerCase().includes("background") || key.toLowerCase().includes("color") || key.toLowerCase().includes("stroke");
+        const keyLooksColor =
+          key.toLowerCase().includes("fill") ||
+          key.toLowerCase().includes("background") ||
+          key.toLowerCase().includes("color") ||
+          key.toLowerCase().includes("stroke");
 
         for (const color of maybeColors) {
           let score = 0;
@@ -345,7 +353,13 @@ function readLineColorFromNestedObject(root: unknown): string | undefined {
       const nextPath = [...path, key.toLowerCase()];
       const keyLower = key.toLowerCase();
       const pathText = nextPath.join(".");
-      const pathHasLine = nextPath.some((part) => part.includes("line") || part.includes("border") || part.includes("stroke") || part.includes("color"));
+      const pathHasLine = nextPath.some(
+        (part) =>
+          part.includes("line") ||
+          part.includes("border") ||
+          part.includes("stroke") ||
+          part.includes("color")
+      );
 
       const maybeColors: string[] = [];
       if (typeof raw === "string") {

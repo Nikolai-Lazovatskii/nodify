@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/i18n/translations.ts
+ * Abstrakt: Obsahuje slovník textov aplikácie v podporovaných jazykoch.
+ */
 export type AppLanguage = "en" | "sk";
 
 export const translations: Record<AppLanguage, Record<string, string>> = {

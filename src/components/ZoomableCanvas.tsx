@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/ZoomableCanvas.tsx
+ * Abstrakt: Implementuje približovateľné a posúvateľné plátno na prácu s veľkou mapou.
+ */
 import React, {
   forwardRef,
   PropsWithChildren,
@@ -252,7 +256,7 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
       }
     })
     .onUpdate((e) => {
-      // A slightly amplified pinch curve makes zoom feel closer to native mind-map apps.
+
       let next = startScale.value * Math.pow(e.scale, 1.35);
       if (next < minScale) next = minScale;
       if (next > maxScale) next = maxScale;

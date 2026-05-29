@@ -1,9 +1,17 @@
+/**
+ * Súbor: app/(auth)/register.tsx
+ * Abstrakt: Zobrazuje registračný formulár a vytvára používateľský účet cez autentifikačný kontext.
+ */
 import React, { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -21,11 +29,10 @@ export default function RegisterScreen() {
     setBusy(true);
     try {
       await signUp(email.trim(), password);
-      // If email confirmation is enabled, the session may be null and user will need to verify email.
-      // In that case, send them to Login; otherwise they will be redirected to tabs by auth guard.
+
       router.replace("/(auth)/login");
-    } catch (e: any) {
-      setErr(e?.message ?? t("auth.registerFailed"));
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error, t("auth.registerFailed")));
     } finally {
       setBusy(false);
     }
@@ -71,7 +78,15 @@ const s = StyleSheet.create({
   rootDark: { backgroundColor: "#0f172a" },
   h1: { fontSize: 24, fontWeight: "900", color: "#111827", marginBottom: 8 },
   h1Dark: { color: "#f8fafc" },
-  input: { height: 44, borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, paddingHorizontal: 12, color: "#111827", backgroundColor: "#ffffff" },
+  input: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    color: "#111827",
+    backgroundColor: "#ffffff",
+  },
   inputDark: { borderColor: "#334155", color: "#f8fafc", backgroundColor: "#111827" },
   btn: { height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#0ea5e9" },
   btnText: { color: "#fff", fontWeight: "900" },

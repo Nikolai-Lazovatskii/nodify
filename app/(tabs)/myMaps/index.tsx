@@ -1,3 +1,7 @@
+/**
+ * Súbor: app/(tabs)/myMaps/index.tsx
+ * Abstrakt: Zobrazuje zoznam máp, import, export, mazanie, synchronizačné stavy a lokálne indikátory.
+ */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -38,20 +42,25 @@ import {
   renameMap,
   saveMap,
 } from "@/src/storage/mapsRepo";
-import { syncMapsOnce } from "@/src/storage/syncMaps";
+import type { MapMeta } from "@/src/types/map";
 
-type MapMeta = {
-  id: string;
-  title: string;
-  updatedAt?: number;
-  storage?: "cloud" | "local";
-};
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export default function MyMapsIndex() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
-  const { user, loading: authLoading, syncing, lastSyncAt } = useAuth();
+  const {
+    user,
+    loading: authLoading,
+    syncing,
+    isOnline,
+    pendingSyncCount,
+    lastSyncAt,
+    syncNow,
+  } = useAuth();
   const colorScheme = useColorScheme() ?? "light";
   const isDark = colorScheme === "dark";
 
@@ -88,7 +97,7 @@ export default function MyMapsIndex() {
       setOffline(false);
       if (user && runSyncAfter) {
         setListSyncing(true);
-        syncMapsOnce()
+        syncNow()
           .then(() => reload(false, false))
           .catch(() => {})
           .finally(() => {
@@ -106,7 +115,7 @@ export default function MyMapsIndex() {
         setLoading(false);
       }
     }
-  }, [user]);
+  }, [syncNow, user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -153,7 +162,7 @@ export default function MyMapsIndex() {
   const openMap = useCallback(
     (id: string) => {
       router.push({
-        pathname: "/(tabs)/myMaps/[id]" as any,
+        pathname: "/(tabs)/myMaps/[id]",
         params: { id },
       });
     },
@@ -244,8 +253,8 @@ export default function MyMapsIndex() {
       } else {
         Alert.alert(t("maps.exportReady"), t("maps.savedTo", { uri }));
       }
-    } catch (e: any) {
-      Alert.alert(t("maps.exportFailed"), e?.message ? String(e.message) : String(e));
+    } catch (error: unknown) {
+      Alert.alert(t("maps.exportFailed"), getErrorMessage(error));
     }
   }, [t]);
 
@@ -280,8 +289,8 @@ export default function MyMapsIndex() {
         },
         { text: t("common.later"), style: "cancel" },
       ]);
-    } catch (e: any) {
-      const message = e?.message ? String(e.message) : String(e);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       if (message.toLowerCase().includes("cancel")) {
         return;
       }
@@ -321,8 +330,8 @@ export default function MyMapsIndex() {
         },
         { text: t("common.later"), style: "cancel" },
       ]);
-    } catch (e: any) {
-      const message = e?.message ? String(e.message) : String(e);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       if (message.toLowerCase().includes("cancel")) {
         return;
       }
@@ -336,6 +345,25 @@ export default function MyMapsIndex() {
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }, [items]);
+
+  const hasPendingSync = user
+    ? pendingSyncCount > 0 || sortedItems.some((item) => item.pendingSyncAt != null)
+    : false;
+  const syncPending = syncing || listSyncing;
+  const syncBadgeIcon = syncPending
+    ? "sync"
+    : hasPendingSync
+      ? "cloud-upload"
+      : offline || !isOnline
+        ? "cloud-off"
+        : "cloud-done";
+  const syncBadgeColor = syncPending
+    ? "#0284c7"
+    : hasPendingSync
+      ? "#0f766e"
+      : offline || !isOnline
+        ? "#b45309"
+        : "#0369a1";
 
   const showSynchronizing = sortedItems.length === 0 && (authLoading || loading || syncing || listSyncing);
   const numColumns = isLandscape ? 2 : 1;
@@ -352,10 +380,10 @@ export default function MyMapsIndex() {
       if (kind === "mm") {
         doExportMm(id);
       } else {
-        exportMapXmind(id, t("maps.exportXmind")).catch((e: any) => {
+        exportMapXmind(id, t("maps.exportXmind")).catch((error: unknown) => {
           Alert.alert(
             t("maps.exportFailed"),
-            e?.message ? String(e.message) : String(e)
+            getErrorMessage(error)
           );
         });
       }
@@ -394,11 +422,16 @@ export default function MyMapsIndex() {
           <Text style={[s.headerTitle, isDark && s.headerTitleDark]}>{t("maps.title")}</Text>
           <View style={s.headerActions}>
             {user ? (
-              <View style={[s.syncBadge, isDark && s.syncBadgeDark]}>
+              <View style={[
+                s.syncBadge,
+                isDark && s.syncBadgeDark,
+                hasPendingSync && s.syncBadgePending,
+                hasPendingSync && isDark && s.syncBadgePendingDark,
+              ]}>
                 <MaterialIcons
-                  name={syncing ? "sync" : offline ? "cloud-off" : "cloud-done"}
+                  name={syncBadgeIcon}
                   size={16}
-                  color={syncing ? "#0284c7" : offline ? "#b45309" : "#0369a1"}
+                  color={syncBadgeColor}
                 />
               </View>
             ) : null}
@@ -447,83 +480,94 @@ export default function MyMapsIndex() {
             </View>
           ) : null
         }
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => openMap(item.id)}
-            style={({ pressed }) => [s.card, isDark && s.cardDark, isLandscape && s.cardLandscape, pressed && s.pressed]}
-          >
-            <View style={s.cardTop}>
-              <Pressable
-                style={s.titlePress}
-                onPress={() => {
-                  if (editingId === item.id) return;
-                  startEdit(item.id, item.title || t("common.untitled"));
-                }}
-              >
-                {editingId === item.id ? (
-                  <TextInput
-                    value={draftTitle}
-                    onChangeText={setDraftTitle}
-                    autoFocus
-                    selectTextOnFocus
-                    style={[s.titleInput, isDark && s.titleInputDark]}
-                    returnKeyType="done"
-                    blurOnSubmit
-                    onSubmitEditing={() => commitRename(item.id, item.title || t("common.untitled"))}
-                    onBlur={() => commitRename(item.id, item.title || t("common.untitled"))}
-                    autoCorrect={false}
-                    autoCapitalize="sentences"
-                    maxLength={80}
-                  />
-                ) : (
-                  <Text style={[s.title, isDark && s.titleDark]} numberOfLines={1}>
-                    {item.title || t("common.untitled")}
-                  </Text>
-                )}
-              </Pressable>
+        renderItem={({ item }) => {
+          const isPendingSync = item.pendingSyncAt != null;
 
-              <Text style={[s.meta, isDark && s.metaDark]}>
-                {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ""}
-              </Text>
-              {item.storage === "cloud" ? (
-                <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
-                  <MaterialIcons name="cloud-done" size={15} color={isDark ? "#7dd3fc" : "#0369a1"} />
+          return (
+            <Pressable
+              onPress={() => openMap(item.id)}
+              style={({ pressed }) => [s.card, isDark && s.cardDark, isLandscape && s.cardLandscape, pressed && s.pressed]}
+            >
+              <View style={s.cardTop}>
+                <Pressable
+                  style={s.titlePress}
+                  onPress={() => {
+                    if (editingId === item.id) return;
+                    startEdit(item.id, item.title || t("common.untitled"));
+                  }}
+                >
+                  {editingId === item.id ? (
+                    <TextInput
+                      value={draftTitle}
+                      onChangeText={setDraftTitle}
+                      autoFocus
+                      selectTextOnFocus
+                      style={[s.titleInput, isDark && s.titleInputDark]}
+                      returnKeyType="done"
+                      blurOnSubmit
+                      onSubmitEditing={() => commitRename(item.id, item.title || t("common.untitled"))}
+                      onBlur={() => commitRename(item.id, item.title || t("common.untitled"))}
+                      autoCorrect={false}
+                      autoCapitalize="sentences"
+                      maxLength={80}
+                    />
+                  ) : (
+                    <Text style={[s.title, isDark && s.titleDark]} numberOfLines={1}>
+                      {item.title || t("common.untitled")}
+                    </Text>
+                  )}
+                </Pressable>
+
+                <Text style={[s.meta, isDark && s.metaDark]}>
+                  {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ""}
+                </Text>
+                <View style={s.badgeRow}>
+                  {isPendingSync ? (
+                    <View style={[s.storageBadge, s.pendingStorageBadge, isDark && s.pendingStorageBadgeDark]}>
+                      <MaterialIcons name="cloud-upload" size={15} color={isDark ? "#5eead4" : "#0f766e"} />
+                    </View>
+                  ) : null}
+                  {item.storage === "cloud" ? (
+                    <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
+                      <MaterialIcons name="cloud-done" size={15} color={isDark ? "#7dd3fc" : "#0369a1"} />
+                    </View>
+                  ) : user ? (
+                    <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
+                      <MaterialIcons name="smartphone" size={15} color={isDark ? "#cbd5e1" : "#64748b"} />
+                    </View>
+                  ) : null}
                 </View>
-              ) : user ? (
-                <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
-                  <MaterialIcons name="smartphone" size={15} color={isDark ? "#cbd5e1" : "#64748b"} />
-                </View>
-              ) : null}
-            </View>
+              </View>
 
-            <View style={s.actionsRow}>
-              <Pressable
-                onPress={() => openMap(item.id)}
-                style={({ pressed }) => [s.actionBtn, isDark && s.actionBtnDark, pressed && s.pressedBtn]}
-              >
-                <Text style={[s.actionText, isDark && s.actionTextDark]}>{t("maps.open")}</Text>
-              </Pressable>
+              <View style={s.actionsRow}>
+                <Pressable
+                  onPress={() => openMap(item.id)}
+                  style={({ pressed }) => [s.actionBtn, isDark && s.actionBtnDark, pressed && s.pressedBtn]}
+                >
+                  <Text style={[s.actionText, isDark && s.actionTextDark]}>{t("maps.open")}</Text>
+                </Pressable>
 
-              <Pressable
-                onPress={() => setExportId(item.id)}
-                style={({ pressed }) => [s.actionBtn, isDark && s.actionBtnDark, pressed && s.pressedBtn]}
-              >
-                <Text style={[s.actionText, isDark && s.actionTextDark]}>{t("maps.export")}</Text>
-              </Pressable>
+                <Pressable
+                  onPress={() => setExportId(item.id)}
+                  style={({ pressed }) => [s.actionBtn, isDark && s.actionBtnDark, pressed && s.pressedBtn]}
+                >
+                  <Text style={[s.actionText, isDark && s.actionTextDark]}>{t("maps.export")}</Text>
+                </Pressable>
 
-              <Pressable
-                onPress={() => onDelete(item.id)}
-                style={({ pressed }) => [
-                  s.actionBtn,
-                  s.dangerBtn,
-                  pressed && s.pressedBtn,
-                ]}
-              >
-                <Text style={[s.actionText, s.dangerText]}>{t("maps.delete")}</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        )}
+                <Pressable
+                  onPress={() => onDelete(item.id)}
+                  style={({ pressed }) => [
+                    s.actionBtn,
+                    s.dangerBtn,
+                    pressed && s.pressedBtn,
+                  ]}
+                >
+                  <Text style={[s.actionText, s.dangerText]}>{t("maps.delete")}</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          );
+        }}
       />
 
       {user && syncToastVisible && !offline ? (
@@ -588,7 +632,16 @@ export default function MyMapsIndex() {
             ]}
             onPress={() => setImportVisible(false)}
           >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark, sheet.cancelText, isDark && sheet.cancelTextDark]}>{t("common.cancel")}</Text>
+            <Text
+              style={[
+                sheet.optionText,
+                isDark && sheet.optionTextDark,
+                sheet.cancelText,
+                isDark && sheet.cancelTextDark,
+              ]}
+            >
+              {t("common.cancel")}
+            </Text>
           </Pressable>
 
           <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
@@ -601,7 +654,6 @@ export default function MyMapsIndex() {
         animationType="slide"
         onRequestClose={() => setExportId(null)}
         onDismiss={() => {
-          // iOS: вызывается после полного закрытия модалки
           runPendingExport();
         }}
       >
@@ -659,7 +711,16 @@ export default function MyMapsIndex() {
             ]}
             onPress={() => setExportId(null)}
           >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark, sheet.cancelText, isDark && sheet.cancelTextDark]}>{t("common.cancel")}</Text>
+            <Text
+              style={[
+                sheet.optionText,
+                isDark && sheet.optionTextDark,
+                sheet.cancelText,
+                isDark && sheet.cancelTextDark,
+              ]}
+            >
+              {t("common.cancel")}
+            </Text>
           </Pressable>
 
           <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
@@ -708,6 +769,14 @@ const s = StyleSheet.create({
   syncBadgeDark: {
     backgroundColor: "rgba(14,165,233,0.10)",
     borderColor: "rgba(56,189,248,0.20)",
+  },
+  syncBadgePending: {
+    backgroundColor: "rgba(20,184,166,0.10)",
+    borderColor: "rgba(20,184,166,0.24)",
+  },
+  syncBadgePendingDark: {
+    backgroundColor: "rgba(45,212,191,0.12)",
+    borderColor: "rgba(94,234,212,0.24)",
   },
   importButton: {
     minWidth: 108,
@@ -764,7 +833,6 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.08)",
   },
   cardLandscape: {
-    // keeps cards visually balanced in 2 columns
     minHeight: 118,
   },
   pressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
@@ -813,6 +881,19 @@ const s = StyleSheet.create({
   storageBadgeDark: {
     backgroundColor: "rgba(255,255,255,0.06)",
     borderColor: "rgba(255,255,255,0.10)",
+  },
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  pendingStorageBadge: {
+    backgroundColor: "rgba(20,184,166,0.10)",
+    borderColor: "rgba(20,184,166,0.22)",
+  },
+  pendingStorageBadgeDark: {
+    backgroundColor: "rgba(45,212,191,0.12)",
+    borderColor: "rgba(94,234,212,0.22)",
   },
   actionsRow: { flexDirection: "row", gap: 10 },
   actionBtn: {

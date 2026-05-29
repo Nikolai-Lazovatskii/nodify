@@ -1,8 +1,16 @@
+/**
+ * Súbor: app/(tabs)/create.tsx
+ * Abstrakt: Vytvára novú myšlienkovú mapu a presmeruje používateľa do editora.
+ */
 import React, { useCallback, useRef } from "react";
 import { View, ActivityIndicator, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { createMap } from "@/src/storage/mapsRepo";
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function CreateTab() {
   const router = useRouter();
@@ -27,9 +35,9 @@ export default function CreateTab() {
             pathname: "/(tabs)/myMaps/[id]",
             params: { id: map.id },
           });
-        } catch (e: any) {
+        } catch (error: unknown) {
           if (cancelled) return;
-          Alert.alert(t("create.createFailed"), e?.message ?? t("create.unknownError"));
+          Alert.alert(t("create.createFailed"), getErrorMessage(error, t("create.unknownError")));
         } finally {
           runningRef.current = false;
         }

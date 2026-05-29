@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/i18n/LanguagePreference.tsx
+ * Abstrakt: Spravuje jazykové nastavenie aplikácie a poskytuje preklady komponentom.
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
@@ -39,7 +43,7 @@ export function LanguagePreferenceProvider({ children }: { children: React.React
           setLanguageState(stored);
         }
       } catch {
-        // Ignore persistence failures and fall back to English.
+
       }
     })();
 
@@ -65,7 +69,7 @@ export function LanguagePreferenceProvider({ children }: { children: React.React
         try {
           await AsyncStorage.setItem(STORAGE_KEY, nextValue);
         } catch {
-          // Ignore persistence failures; runtime value still updates.
+
         }
       },
       toggleLanguage: async () => {
@@ -74,7 +78,7 @@ export function LanguagePreferenceProvider({ children }: { children: React.React
         try {
           await AsyncStorage.setItem(STORAGE_KEY, nextValue);
         } catch {
-          // Ignore persistence failures; runtime value still updates.
+
         }
       },
       t,

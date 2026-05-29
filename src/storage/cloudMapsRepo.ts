@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/storage/cloudMapsRepo.ts
+ * Abstrakt: Zapuzdruje čítanie, zápis a mazanie myšlienkových máp v Supabase.
+ */
 import { supabase } from "@/src/lib/supabase";
 import { MindMap } from "@/src/types/map";
 
@@ -12,6 +16,10 @@ export type CloudMapRow = {
   deleted_at?: string | null;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 async function requireUserId(): Promise<string> {
   const { data } = await supabase.auth.getUser();
   const uid = data.user?.id;
@@ -19,19 +27,48 @@ async function requireUserId(): Promise<string> {
   return uid;
 }
 
-function normalizeCloudRow(row: any): CloudMapRow {
+function normalizeCloudRow(row: unknown): CloudMapRow {
+  const source = isRecord(row) ? row : {};
   return {
-    ...row,
-    schema_version: row?.schema_version ?? 2,
-    doc: row?.doc ?? row?.map,
+    ...(source as Partial<CloudMapRow>),
+    schema_version:
+      typeof source.schema_version === "number" ? source.schema_version : 2,
+    doc: (source.doc ?? source.map) as MindMap,
   } as CloudMapRow;
 }
 
-function isMissingColumnError(error: any, columnName: string) {
-  const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`;
+function getCloudErrorText(error: unknown): string {
+  if (!isRecord(error)) {
+    return error instanceof Error ? error.message : String(error ?? "Unknown cloud error");
+  }
+
+  return [error.message, error.details, error.hint]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+}
+
+function getCloudErrorCode(error: unknown): string | undefined {
+  if (!isRecord(error)) {
+    return undefined;
+  }
+
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+function throwCloudError(error: unknown): never {
+  if (error instanceof Error) {
+    throw error;
+  }
+
+  throw new Error(getCloudErrorText(error));
+}
+
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  const message = getCloudErrorText(error);
+  const code = getCloudErrorCode(error);
   return (
-    error?.code === "42703" ||
-    error?.code === "PGRST204" ||
+    code === "42703" ||
+    code === "PGRST204" ||
     message.toLowerCase().includes(`'${columnName}'`) ||
     message.toLowerCase().includes(`column ${columnName}`) ||
     message.toLowerCase().includes(`schema cache`) ||
@@ -39,13 +76,19 @@ function isMissingColumnError(error: any, columnName: string) {
   );
 }
 
-function isMissingAnyColumnError(error: any, columnNames: string[]) {
+function isMissingAnyColumnError(error: unknown, columnNames: string[]): boolean {
   return columnNames.some((columnName) => isMissingColumnError(error, columnName));
 }
 
-function isOnConflictConstraintError(error: any) {
-  const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+function isOnConflictConstraintError(error: unknown): boolean {
+  const message = getCloudErrorText(error).toLowerCase();
   return message.includes("no unique") && message.includes("constraint");
+}
+
+function selectColumns(docColumn: "doc" | "map", includeSchemaVersion: boolean, includeDeletedAt: boolean): string {
+  const schemaColumn = includeSchemaVersion ? "schema_version," : "";
+  const deletedColumn = includeDeletedAt ? ",deleted_at" : "";
+  return `user_id,id,title,${schemaColumn}${docColumn},created_at,updated_at${deletedColumn}`;
 }
 
 export async function cloudListMaps(): Promise<CloudMapRow[]> {
@@ -54,7 +97,7 @@ export async function cloudListMaps(): Promise<CloudMapRow[]> {
   const query = (docColumn: "doc" | "map", includeSchemaVersion: boolean, includeDeletedAt: boolean) => {
     let request = supabase
       .from("mind_maps")
-      .select(`user_id,id,title,${includeSchemaVersion ? "schema_version," : ""}${docColumn},created_at,updated_at${includeDeletedAt ? ",deleted_at" : ""}`)
+      .select(selectColumns(docColumn, includeSchemaVersion, includeDeletedAt))
       .eq("user_id", uid);
 
     if (includeDeletedAt) {
@@ -64,7 +107,7 @@ export async function cloudListMaps(): Promise<CloudMapRow[]> {
     return request.order("updated_at", { ascending: false });
   };
 
-  let lastError: any = null;
+  let lastError: unknown = null;
   for (const includeSchemaVersion of [true, false]) {
     for (const includeDeletedAt of [true, false]) {
       for (const docColumn of ["doc", "map"] as const) {
@@ -74,13 +117,13 @@ export async function cloudListMaps(): Promise<CloudMapRow[]> {
         }
         lastError = result.error;
         if (!isMissingAnyColumnError(result.error, ["doc", "map", "schema_version", "deleted_at"])) {
-          throw result.error;
+          throwCloudError(result.error);
         }
       }
     }
   }
 
-  throw lastError;
+  throwCloudError(lastError);
 }
 
 export async function cloudGetMap(id: string): Promise<CloudMapRow | null> {
@@ -88,12 +131,12 @@ export async function cloudGetMap(id: string): Promise<CloudMapRow | null> {
 
   const query = (docColumn: "doc" | "map", includeSchemaVersion: boolean, includeDeletedAt: boolean) => supabase
     .from("mind_maps")
-    .select(`user_id,id,title,${includeSchemaVersion ? "schema_version," : ""}${docColumn},created_at,updated_at${includeDeletedAt ? ",deleted_at" : ""}`)
+    .select(selectColumns(docColumn, includeSchemaVersion, includeDeletedAt))
     .eq("user_id", uid)
     .eq("id", id)
     .maybeSingle();
 
-  let lastError: any = null;
+  let lastError: unknown = null;
   for (const includeSchemaVersion of [true, false]) {
     for (const includeDeletedAt of [true, false]) {
       for (const docColumn of ["doc", "map"] as const) {
@@ -103,18 +146,19 @@ export async function cloudGetMap(id: string): Promise<CloudMapRow | null> {
         }
         lastError = result.error;
         if (!isMissingAnyColumnError(result.error, ["doc", "map", "schema_version", "deleted_at"])) {
-          throw result.error;
+          throwCloudError(result.error);
         }
       }
     }
   }
 
-  throw lastError;
+  throwCloudError(lastError);
 }
 
-export async function cloudUpsertMap(map: MindMap, schemaVersion = 2): Promise<void> {
+export async function cloudUpsertMap(map: MindMap, schemaVersion = 2): Promise<number> {
   const uid = await requireUserId();
   const now = new Date().toISOString();
+  const updatedAt = Date.parse(now);
 
   const makePayload = (docColumn: "doc" | "map", includeSchemaVersion: boolean, includeDeletedAt: boolean) => ({
     user_id: uid,
@@ -127,37 +171,37 @@ export async function cloudUpsertMap(map: MindMap, schemaVersion = 2): Promise<v
     ...(includeDeletedAt ? { deleted_at: null } : {}),
   });
 
-  let lastError: any = null;
+  let lastError: unknown = null;
   for (const includeSchemaVersion of [true, false]) {
     for (const includeDeletedAt of [true, false]) {
       for (const docColumn of ["doc", "map"] as const) {
-      const result = await supabase
-        .from("mind_maps")
-        .upsert(makePayload(docColumn, includeSchemaVersion, includeDeletedAt), { onConflict: "user_id,id" });
-
-      if (!result.error) return;
-
-      if (isOnConflictConstraintError(result.error)) {
-        const primaryKeyResult = await supabase
+        const result = await supabase
           .from("mind_maps")
-          .upsert(makePayload(docColumn, includeSchemaVersion, includeDeletedAt));
-        if (!primaryKeyResult.error) return;
-        lastError = primaryKeyResult.error;
-        if (!isMissingAnyColumnError(primaryKeyResult.error, ["doc", "map", "schema_version", "deleted_at"])) {
-          throw primaryKeyResult.error;
-        }
-        continue;
-      }
+          .upsert(makePayload(docColumn, includeSchemaVersion, includeDeletedAt), { onConflict: "user_id,id" });
 
-      lastError = result.error;
-      if (!isMissingAnyColumnError(result.error, ["doc", "map", "schema_version", "deleted_at"])) {
-        throw result.error;
+        if (!result.error) return updatedAt;
+
+        if (isOnConflictConstraintError(result.error)) {
+          const primaryKeyResult = await supabase
+            .from("mind_maps")
+            .upsert(makePayload(docColumn, includeSchemaVersion, includeDeletedAt));
+          if (!primaryKeyResult.error) return updatedAt;
+          lastError = primaryKeyResult.error;
+          if (!isMissingAnyColumnError(primaryKeyResult.error, ["doc", "map", "schema_version", "deleted_at"])) {
+            throwCloudError(primaryKeyResult.error);
+          }
+          continue;
+        }
+
+        lastError = result.error;
+        if (!isMissingAnyColumnError(result.error, ["doc", "map", "schema_version", "deleted_at"])) {
+          throwCloudError(result.error);
         }
       }
     }
   }
 
-  throw lastError;
+  throwCloudError(lastError);
 }
 
 export async function cloudSoftDeleteMap(id: string): Promise<void> {
@@ -172,7 +216,7 @@ export async function cloudSoftDeleteMap(id: string): Promise<void> {
   if (!error) return;
 
   if (!isMissingColumnError(error, "deleted_at")) {
-    throw error;
+    throwCloudError(error);
   }
 
   const hardDelete = await supabase
@@ -181,5 +225,5 @@ export async function cloudSoftDeleteMap(id: string): Promise<void> {
     .eq("user_id", uid)
     .eq("id", id);
 
-  if (hardDelete.error) throw hardDelete.error;
+  if (hardDelete.error) throwCloudError(hardDelete.error);
 }

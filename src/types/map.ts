@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/types/map.ts
+ * Abstrakt: Definuje typy dátového modelu myšlienkových máp, uzlov, hrán a metadát.
+ */
 export type NodeId = string;
 
 export type NodeShape = "circle" | "rounded" | "capsule";
@@ -126,4 +130,15 @@ export type MindMap = {
   nodes: Record<string, MindMapNode>;
   edges: RelationshipEdge[];
   importedFormat?: ImportedFormatMetadata;
+};
+
+export type MapMeta = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  schemaVersion: number;
+  storage?: "cloud" | "local";
+  pendingSyncAt: number | null;
+  lastSyncedAt: number | null;
 };

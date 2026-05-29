@@ -1,9 +1,17 @@
+/**
+ * Súbor: app/(auth)/login.tsx
+ * Abstrakt: Zobrazuje prihlasovací formulár a odosiela prihlasovacie údaje cez autentifikačný kontext.
+ */
 import React, { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { Link, router, Href } from "expo-router";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
@@ -21,8 +29,8 @@ export default function LoginScreen() {
     try {
       await signIn(email.trim(), password);
       router.replace("/(tabs)/account");
-    } catch (e: any) {
-      setErr(e?.message ?? t("auth.loginFailed"));
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error, t("auth.loginFailed")));
     } finally {
       setBusy(false);
     }
@@ -68,7 +76,15 @@ const s = StyleSheet.create({
   rootDark: { backgroundColor: "#0f172a" },
   h1: { fontSize: 24, fontWeight: "900", color: "#111827", marginBottom: 8 },
   h1Dark: { color: "#f8fafc" },
-  input: { height: 44, borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, paddingHorizontal: 12, color: "#111827", backgroundColor: "#ffffff" },
+  input: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    color: "#111827",
+    backgroundColor: "#ffffff",
+  },
   inputDark: { borderColor: "#334155", color: "#f8fafc", backgroundColor: "#111827" },
   btn: { height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#0ea5e9" },
   btnText: { color: "#fff", fontWeight: "900" },

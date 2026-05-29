@@ -1,3 +1,7 @@
+/**
+ * Súbor: app/(tabs)/_layout.tsx
+ * Abstrakt: Definuje hlavnú záložkovú navigáciu aplikácie a jej vizuálne nastavenia.
+ */
 import React from "react";
 import { Tabs } from "expo-router";
 import { useWindowDimensions } from "react-native";

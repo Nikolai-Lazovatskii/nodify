@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/NodeInspector.tsx
+ * Abstrakt: Poskytuje bočný panel na úpravu vlastností uzla, poznámok, tagov a príloh.
+ */
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,

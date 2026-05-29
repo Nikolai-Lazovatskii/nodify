@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/MindMapCanvas.tsx
+ * Abstrakt: Vykresľuje plátno myšlienkovej mapy so spojnicami a uzlami.
+ */
 import React from "react";
 import { View } from "react-native";
 import Svg, { Line, Circle, Text as SvgText } from "react-native-svg";
@@ -33,7 +37,6 @@ export const MindMapCanvas: React.FC<Props> = ({ map }) => {
   return (
     <View style={{ flex: 1, marginTop: 16 }}>
       <Svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`}>
-        {/* линии */}
         {Object.values(positionedNodes).map(({ node, x, y }) => {
           if (!node.parentId) return null;
           const parentPos = positionedNodes[node.parentId];
@@ -52,7 +55,6 @@ export const MindMapCanvas: React.FC<Props> = ({ map }) => {
           );
         })}
 
-        {/* узлы */}
         {Object.values(positionedNodes).map(({ node, x, y }) => {
           const isRoot = node.parentId === null;
           const radius = isRoot ? 26 : 20;

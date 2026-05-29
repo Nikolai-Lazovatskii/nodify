@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/MapScreen.styles.ts
+ * Abstrakt: Definuje zdieľané štýly obrazovky editora myšlienkovej mapy.
+ */
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({

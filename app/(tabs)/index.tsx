@@ -1,3 +1,7 @@
+/**
+ * Súbor: app/(tabs)/index.tsx
+ * Abstrakt: Zobrazuje úvodnú obrazovku menu s navigáciou k hlavným častiam aplikácie.
+ */
 import React from "react";
 import { Image, Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,10 +32,10 @@ export default function Index() {
   const goAccount = () => {
     if (loading) return;
     if (user) {
-      router.push("/(tabs)/account" as any);
+      router.push("/(tabs)/account");
       return;
     }
-    router.push("/(auth)/login" as any);
+    router.push("/(auth)/login");
   };
 
   return (

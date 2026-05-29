@@ -1,12 +1,20 @@
+/**
+ * Súbor: app/(tabs)/myMaps/[id].tsx
+ * Abstrakt: Načíta konkrétnu myšlienkovú mapu a prepojí editor s ukladaním zmien.
+ */
 import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 
 import MapScreen from "@/src/screens/MapScreen";
 import { getMap, saveMap } from "@/src/storage/mapsRepo";
 import { MindMap } from "@/src/types/map";
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function MapEditorScreen() {
   const { t } = useTranslation();
@@ -30,10 +38,10 @@ export default function MapEditorScreen() {
           latestMapRef.current = loaded;
           setMap(loaded);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (alive) {
           setMap(null);
-          setLoadError(error?.message ?? t("maps.failedToOpenMap"));
+          setLoadError(getErrorMessage(error, t("maps.failedToOpenMap")));
         }
       }
     })();
@@ -55,9 +63,11 @@ export default function MapEditorScreen() {
 
   if (loadError) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: isDark ? "#020617" : "#ffffff" }}>
-        <Text style={{ color: isDark ? "#f8fafc" : "#111827", fontSize: 16, fontWeight: "700", textAlign: "center" }}>{t("maps.failedToOpenMap")}</Text>
-        <Text style={{ marginTop: 8, color: isDark ? "#94a3b8" : "#475569", fontSize: 14, textAlign: "center" }}>
+      <View style={[styles.centered, styles.errorContainer, isDark && styles.centeredDark]}>
+        <Text style={[styles.errorTitle, isDark && styles.errorTitleDark]}>
+          {t("maps.failedToOpenMap")}
+        </Text>
+        <Text style={[styles.errorText, isDark && styles.errorTextDark]}>
           {loadError}
         </Text>
       </View>
@@ -66,7 +76,7 @@ export default function MapEditorScreen() {
 
   if (!map) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: isDark ? "#020617" : "#ffffff" }}>
+      <View style={[styles.centered, isDark && styles.centeredDark]}>
         <ActivityIndicator />
       </View>
     );
@@ -74,3 +84,36 @@ export default function MapEditorScreen() {
 
   return <MapScreen key={map.id} initialMap={map} onMapChange={persist} />;
 }
+
+const styles = StyleSheet.create({
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+  },
+  centeredDark: {
+    backgroundColor: "#020617",
+  },
+  errorContainer: {
+    padding: 24,
+  },
+  errorTitle: {
+    color: "#111827",
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  errorTitleDark: {
+    color: "#f8fafc",
+  },
+  errorText: {
+    marginTop: 8,
+    color: "#475569",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  errorTextDark: {
+    color: "#94a3b8",
+  },
+});

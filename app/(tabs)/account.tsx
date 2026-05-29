@@ -1,3 +1,7 @@
+/**
+ * Súbor: app/(tabs)/account.tsx
+ * Abstrakt: Spravuje obrazovku účtu, profil používateľa, zmenu hesla a odhlásenie.
+ */
 import React, { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { router, useFocusEffect } from "expo-router";
@@ -5,6 +9,10 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/i18n/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
 import { getMyProfile, upsertMyUsername } from "@/src/storage/profileRepo";
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function AccountScreen() {
   const { user, loading, signOut, changePassword } = useAuth();
@@ -29,8 +37,8 @@ export default function AccountScreen() {
         setProfileLoading(true);
         const p = await getMyProfile();
         setUsername(p?.username ?? "");
-      } catch (e: any) {
-        Alert.alert(t("account.profileError"), e?.message ?? t("account.failedLoadProfile"));
+      } catch (error: unknown) {
+        Alert.alert(t("account.profileError"), getErrorMessage(error, t("account.failedLoadProfile")));
       } finally {
         setProfileLoading(false);
       }
@@ -60,8 +68,8 @@ export default function AccountScreen() {
       setSavingUsername(true);
       await upsertMyUsername(username);
       Alert.alert(t("account.saved"), t("account.usernameUpdated"));
-    } catch (e: any) {
-      Alert.alert(t("account.saveError"), e?.message ?? t("account.failedSaveUsername"));
+    } catch (error: unknown) {
+      Alert.alert(t("account.saveError"), getErrorMessage(error, t("account.failedSaveUsername")));
     } finally {
       setSavingUsername(false);
     }
@@ -86,8 +94,8 @@ export default function AccountScreen() {
       setNewPass("");
       setNewPass2("");
       Alert.alert(t("common.done"), t("account.passwordUpdated"));
-    } catch (e: any) {
-      Alert.alert(t("account.passwordError"), e?.message ?? t("account.failedUpdatePassword"));
+    } catch (error: unknown) {
+      Alert.alert(t("account.passwordError"), getErrorMessage(error, t("account.failedUpdatePassword")));
     } finally {
       setSavingPass(false);
     }

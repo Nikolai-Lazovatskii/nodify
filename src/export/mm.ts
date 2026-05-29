@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/export/mm.ts
+ * Abstrakt: Prevádza internú myšlienkovú mapu do XML formátu FreeMind.
+ */
 import { MindMap, MindMapNode } from "../types/map";
 import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
 

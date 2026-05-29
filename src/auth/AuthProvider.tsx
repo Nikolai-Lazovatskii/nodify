@@ -1,14 +1,24 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+/**
+ * Súbor: src/auth/AuthProvider.tsx
+ * Abstrakt: Poskytuje autentifikačný stav, operácie účtu a automatickú synchronizáciu máp.
+ */
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, AppState } from "react-native";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { syncMapsOnce } from "../storage/syncMaps";
+import { listLocalMaps } from "../storage/mapsRepo";
+import { syncMapsOnce, type SyncConflictResolution } from "../storage/syncMaps";
 
 type AuthState = {
   session: Session | null;
   user: User | null;
   loading: boolean;
   syncing: boolean;
+  isOnline: boolean;
+  syncError: string | null;
+  pendingSyncCount: number;
   lastSyncAt: number | null;
+  syncNow: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -17,28 +27,68 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error ?? "Unknown sync error");
+}
+
+function resolveSyncConflict(): Promise<SyncConflictResolution> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      "Konflikt synchronizácie",
+      "Táto mapa bola upravená na inom zariadení aj lokálne. Ktorú verziu chcete zachovať?",
+      [
+        { text: "Táto verzia", onPress: () => resolve("local") },
+        { text: "Verzia z cloudu", onPress: () => resolve("cloud") },
+      ],
+      { cancelable: false }
+    );
+  });
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 
   const syncingRef = useRef(false);
 
-  const runSync = async () => {
+  const refreshPendingSyncCount = useCallback(async () => {
+    try {
+      const localMaps = await listLocalMaps();
+      setPendingSyncCount(localMaps.filter((item) => item.pendingSyncAt != null).length);
+    } catch {
+      setPendingSyncCount(0);
+    }
+  }, []);
+
+  const runSync = useCallback(async () => {
     if (syncingRef.current) return;
     syncingRef.current = true;
     setSyncing(true);
     try {
-      await syncMapsOnce();
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setPendingSyncCount(0);
+        return;
+      }
+
+      await syncMapsOnce({ resolveConflict: resolveSyncConflict });
+      setIsOnline(true);
+      setSyncError(null);
       setLastSyncAt(Date.now());
-    } catch {
-      // ignore (offline / RLS / transient)
+    } catch (error) {
+      setIsOnline(false);
+      setSyncError(getErrorMessage(error));
     } finally {
+      await refreshPendingSyncCount();
       syncingRef.current = false;
       setSyncing(false);
     }
-  };
+  }, [refreshPendingSyncCount]);
 
   useEffect(() => {
     let mounted = true;
@@ -51,6 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(data.session ?? null);
         if (data.session) {
           void runSync();
+        } else {
+          setPendingSyncCount(0);
         }
       }
       setLoading(false);
@@ -62,6 +114,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (nextSession) {
         void runSync();
+      } else {
+        setPendingSyncCount(0);
+        setSyncError(null);
       }
     });
 
@@ -69,7 +124,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, []);
+  }, [runSync]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void runSync();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [runSync, session]);
+
+  useEffect(() => {
+    if (!session || isOnline) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void runSync();
+    }, 10000);
+
+    return () => clearInterval(timer);
+  }, [isOnline, runSync, session]);
 
   const value = useMemo<AuthState>(() => {
     return {
@@ -77,7 +158,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: session?.user ?? null,
       loading,
       syncing,
+      isOnline,
+      syncError,
+      pendingSyncCount,
       lastSyncAt,
+      syncNow: runSync,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -95,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error) throw error;
       },
     };
-  }, [lastSyncAt, session, loading, syncing]);
+  }, [isOnline, lastSyncAt, pendingSyncCount, runSync, session, loading, syncError, syncing]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

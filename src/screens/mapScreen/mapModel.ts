@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/mapScreen/mapModel.ts
+ * Abstrakt: Obsahuje operácie nad dátovým modelom mapy, uzlami a vzťahmi.
+ */
 import { MindMap, MindMapNode, NodeAttachment, RelationshipEdge } from "@/src/types/map";
 import { estimateNodeHalfBounds } from "./routing";
 

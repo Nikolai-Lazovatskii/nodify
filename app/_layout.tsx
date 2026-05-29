@@ -1,9 +1,11 @@
-/* eslint-disable import/no-duplicates */
-import "react-native-gesture-handler";
+/**
+ * Súbor: app/_layout.tsx
+ * Abstrakt: Inicializuje koreňové rozloženie aplikácie, poskytovateľov a autentifikačné presmerovania.
+ */
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import React from "react";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";

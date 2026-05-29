@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/theme/ThemePreference.tsx
+ * Abstrakt: Spravuje svetlý a tmavý režim aplikácie s lokálnym uložením voľby.
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ColorSchemeName, useColorScheme as useNativeColorScheme } from "react-native";
@@ -31,7 +35,7 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
           setPreferenceState(stored);
         }
       } catch {
-        // Ignore storage failures and fall back to the device theme.
+
       }
     })();
 
@@ -56,7 +60,7 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
             await AsyncStorage.removeItem(STORAGE_KEY);
           }
         } catch {
-          // Ignore persistence failures; runtime preference still updates.
+
         }
       },
       togglePreference: async () => {
@@ -65,7 +69,7 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
         try {
           await AsyncStorage.setItem(STORAGE_KEY, nextValue);
         } catch {
-          // Ignore persistence failures; runtime preference still updates.
+
         }
       },
     };

@@ -1,23 +1,46 @@
+/**
+ * Súbor: src/storage/mapsRepo.ts
+ * Abstrakt: Spravuje lokálne ukladanie máp, cloudovú vyrovnávaciu pamäť a synchronizačné metadáta.
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { MindMap } from "../types/map";
+import { MapMeta, MindMap } from "../types/map";
 import { exportXmind } from "../export/doExportXmind";
 import { supabase } from "../lib/supabase";
-import { cloudGetMap, cloudListMaps, cloudSoftDeleteMap, cloudUpsertMap } from "./cloudMapsRepo";
+import { cloudGetMap, cloudListMaps, cloudSoftDeleteMap, cloudUpsertMap, type CloudMapRow } from "./cloudMapsRepo";
 import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
-
-export type MapMeta = {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  schemaVersion: number;
-  storage?: "cloud" | "local";
-};
 
 const INDEX_KEY = "nodify:maps:index:v1";
 const DOC_KEY = (id: string) => `nodify:maps:doc:v1:${id}`;
 
 const SCHEMA_VERSION = 2;
+
+type WriteLocalMapOptions = {
+  storage: "cloud" | "local";
+  createdAt?: number;
+  updatedAt?: number;
+  pendingSyncAt?: number | null;
+  lastSyncedAt?: number | null;
+};
+
+type CacheCloudMapOptions = {
+  createdAt?: number;
+  updatedAt?: number;
+  lastSyncedAt?: number;
+  force?: boolean;
+};
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return typeof error === "string" ? error : "Unknown error";
+}
+
+function createStorageError(action: string, error: unknown, id?: string): Error {
+  const suffix = id ? ` "${id}"` : "";
+  return new Error(`Failed to ${action}${suffix}: ${getErrorMessage(error)}`);
+}
 
 function safeParse<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -28,14 +51,56 @@ function safeParse<T>(raw: string | null): T | null {
   }
 }
 
-async function readIndex(): Promise<MapMeta[]> {
-  const raw = await AsyncStorage.getItem(INDEX_KEY);
-  const parsed = safeParse<MapMeta[]>(raw);
-  return Array.isArray(parsed) ? parsed : [];
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-async function writeIndex(items: MapMeta[]) {
-  await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(items));
+function numberOrFallback(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeMapMeta(value: unknown): MapMeta | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+
+  const now = Date.now();
+  const updatedAt = numberOrFallback(value.updatedAt, now);
+  const createdAt = numberOrFallback(value.createdAt, updatedAt);
+  const storage = value.storage === "cloud" || value.storage === "local" ? value.storage : undefined;
+
+  return {
+    id: value.id,
+    title: typeof value.title === "string" ? value.title : "Untitled",
+    createdAt,
+    updatedAt,
+    schemaVersion: numberOrFallback(value.schemaVersion, SCHEMA_VERSION),
+    ...(storage ? { storage } : {}),
+    pendingSyncAt: nullableNumber(value.pendingSyncAt),
+    lastSyncedAt: nullableNumber(value.lastSyncedAt),
+  };
+}
+
+async function readIndex(): Promise<MapMeta[]> {
+  try {
+    const raw = await AsyncStorage.getItem(INDEX_KEY);
+    const parsed = safeParse<unknown>(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeMapMeta).filter((item): item is MapMeta => !!item) : [];
+  } catch (error) {
+    throw createStorageError("read maps index", error);
+  }
+}
+
+async function writeIndex(items: MapMeta[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(items.map(normalizeMapMeta).filter(Boolean)));
+  } catch (error) {
+    throw createStorageError("write maps index", error);
+  }
 }
 
 function escapeRegExp(value: string): string {
@@ -55,14 +120,7 @@ async function getMapsForTitleNumbering(userId: string | null): Promise<MapMeta[
 
   try {
     const rows = await cloudListMaps();
-    return rows.map((row) => ({
-      id: row.id,
-      title: row.title ?? "Untitled",
-      createdAt: isoToMs(row.created_at),
-      updatedAt: isoToMs(row.updated_at),
-      schemaVersion: row.schema_version ?? SCHEMA_VERSION,
-      storage: "cloud",
-    }));
+    return rows.map((row) => cloudRowToMeta(row));
   } catch {
     return localItems;
   }
@@ -91,8 +149,9 @@ async function getNextMapTitle(baseTitle: string, userId: string | null): Promis
   return numberedTitle(trimmedBase, nextNumber);
 }
 
-async function writeLocalMap(map: MindMap, storage: "cloud" | "local", createdAt?: number) {
+async function writeLocalMap(map: MindMap, options: WriteLocalMapOptions) {
   const now = Date.now();
+  const updatedAt = options.updatedAt ?? now;
   await AsyncStorage.setItem(
     DOC_KEY(map.id),
     JSON.stringify({ schemaVersion: SCHEMA_VERSION, map })
@@ -105,18 +164,24 @@ async function writeLocalMap(map: MindMap, storage: "cloud" | "local", createdAt
     index[i] = {
       ...index[i],
       title: map.title || "Untitled",
-      updatedAt: now,
+      updatedAt,
       schemaVersion: SCHEMA_VERSION,
-      storage,
+      storage: options.storage,
+      pendingSyncAt:
+        options.pendingSyncAt !== undefined ? options.pendingSyncAt : index[i].pendingSyncAt,
+      lastSyncedAt:
+        options.lastSyncedAt !== undefined ? options.lastSyncedAt : index[i].lastSyncedAt,
     };
   } else {
     index.unshift({
       id: map.id,
       title: map.title || "Untitled",
-      createdAt: createdAt ?? now,
-      updatedAt: now,
+      createdAt: options.createdAt ?? now,
+      updatedAt,
       schemaVersion: SCHEMA_VERSION,
-      storage,
+      storage: options.storage,
+      pendingSyncAt: options.pendingSyncAt ?? null,
+      lastSyncedAt: options.lastSyncedAt ?? null,
     });
   }
 
@@ -124,13 +189,39 @@ async function writeLocalMap(map: MindMap, storage: "cloud" | "local", createdAt
 }
 
 export async function getLocalMap(id: string): Promise<MindMap | null> {
-  const raw = await AsyncStorage.getItem(DOC_KEY(id));
-  const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
-  return doc?.map ?? null;
+  try {
+    const raw = await AsyncStorage.getItem(DOC_KEY(id));
+    const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
+    return doc?.map ?? null;
+  } catch (error) {
+    throw createStorageError("load local map", error, id);
+  }
 }
 
-export async function cacheCloudMap(map: MindMap, createdAt?: number): Promise<void> {
-  await writeLocalMap(map, "cloud", createdAt);
+export async function cacheCloudMap(
+  map: MindMap,
+  options: number | CacheCloudMapOptions = {}
+): Promise<void> {
+  try {
+    const normalizedOptions = typeof options === "number" ? { createdAt: options } : options;
+    const index = await readIndex();
+    const existing = index.find((item) => item.id === map.id);
+
+    if (existing?.pendingSyncAt != null && !normalizedOptions.force) {
+      return;
+    }
+
+    const updatedAt = normalizedOptions.updatedAt ?? Date.now();
+    await writeLocalMap(map, {
+      storage: "cloud",
+      createdAt: normalizedOptions.createdAt,
+      updatedAt,
+      pendingSyncAt: null,
+      lastSyncedAt: normalizedOptions.lastSyncedAt ?? updatedAt,
+    });
+  } catch (error) {
+    throw createStorageError("cache cloud map", error, map.id);
+  }
 }
 
 function uuidv4(): string {
@@ -157,42 +248,62 @@ function isoToMs(iso: string | null | undefined): number {
   return Number.isFinite(t) ? t : Date.now();
 }
 
+function cloudRowToMeta(row: CloudMapRow, localMeta?: MapMeta): MapMeta {
+  const updatedAt = isoToMs(row.updated_at);
+
+  return {
+    id: row.id,
+    title: row.title ?? "Untitled",
+    createdAt: isoToMs(row.created_at),
+    updatedAt,
+    schemaVersion: row.schema_version ?? SCHEMA_VERSION,
+    storage: "cloud",
+    pendingSyncAt: null,
+    lastSyncedAt: localMeta?.lastSyncedAt ?? updatedAt,
+  };
+}
+
 export async function listMaps(): Promise<MapMeta[]> {
-  const userId = await getUserId();
-  const localItems = await readIndex();
-  const normalizedLocalItems = localItems
-    .map((item) => ({ ...item, storage: item.storage ?? ("local" as const) }))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  try {
+    const userId = await getUserId();
+    const localItems = await readIndex();
+    const normalizedLocalItems = localItems
+      .map((item) => ({ ...item, storage: item.storage ?? ("local" as const) }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
 
-  if (userId) {
-    try {
-      const rows = await cloudListMaps();
-      const cloudItems = rows.map((row) => ({
-        id: row.id,
-        title: row.title ?? "Untitled",
-        createdAt: isoToMs(row.created_at),
-        updatedAt: isoToMs(row.updated_at),
-        schemaVersion: row.schema_version ?? SCHEMA_VERSION,
-        storage: "cloud" as const,
-      }));
-      const cloudIds = new Set(cloudItems.map((item) => item.id));
-      return [
-        ...cloudItems,
-        ...normalizedLocalItems.filter((item) => !cloudIds.has(item.id)),
-      ].sort((a, b) => b.updatedAt - a.updatedAt);
-    } catch {
-      throw new Error("Cloud maps unavailable");
+    if (userId) {
+      try {
+        const rows = await cloudListMaps();
+        const localById = new Map(normalizedLocalItems.map((item) => [item.id, item]));
+        const cloudItems = rows.map((row) => {
+          const localMeta = localById.get(row.id);
+          return localMeta?.pendingSyncAt != null ? localMeta : cloudRowToMeta(row, localMeta);
+        });
+        const cloudIds = new Set(cloudItems.map((item) => item.id));
+        return [
+          ...cloudItems,
+          ...normalizedLocalItems.filter((item) => !cloudIds.has(item.id)),
+        ].sort((a, b) => b.updatedAt - a.updatedAt);
+      } catch {
+        throw new Error("Cloud maps unavailable");
+      }
     }
-  }
 
-  return normalizedLocalItems;
+    return normalizedLocalItems;
+  } catch (error) {
+    throw createStorageError("list maps", error);
+  }
 }
 
 export async function listLocalMaps(): Promise<MapMeta[]> {
-  const items = await readIndex();
-  return items
-    .map((item) => ({ ...item, storage: item.storage ?? "local" }))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  try {
+    const items = await readIndex();
+    return items
+      .map((item) => ({ ...item, storage: item.storage ?? "local" }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch (error) {
+    throw createStorageError("list local maps", error);
+  }
 }
 
 type CreateMapOptions = {
@@ -204,103 +315,172 @@ export async function createMap(
   rootTitle = "Root",
   options: CreateMapOptions = {}
 ): Promise<MindMap> {
-  const userId = await getUserId();
-  const now = Date.now();
-  const nextTitle = options.numberedTitle ? await getNextMapTitle(title, userId) : title;
+  try {
+    const userId = await getUserId();
+    const now = Date.now();
+    const nextTitle = options.numberedTitle ? await getNextMapTitle(title, userId) : title;
 
-  const id = uuidv4();
+    const id = uuidv4();
 
-  const map: MindMap = {
-    id,
-    title: nextTitle,
-    rootId: "root",
-    edges: [],
-    nodes: {
-      root: { id: "root", parentId: null, title: rootTitle, x: 0, y: 0, children: [] },
-    },
-  };
+    const map: MindMap = {
+      id,
+      title: nextTitle,
+      rootId: "root",
+      edges: [],
+      nodes: {
+        root: { id: "root", parentId: null, title: rootTitle, x: 0, y: 0, children: [] },
+      },
+    };
 
-  if (userId) {
-    try {
-      await cloudUpsertMap(map, SCHEMA_VERSION);
-      await writeLocalMap(map, "cloud", now);
-    } catch {
-      await writeLocalMap(map, "local", now);
+    if (userId) {
+      try {
+        const syncedAt = await cloudUpsertMap(map, SCHEMA_VERSION);
+        await writeLocalMap(map, {
+          storage: "cloud",
+          createdAt: now,
+          updatedAt: syncedAt,
+          pendingSyncAt: null,
+          lastSyncedAt: syncedAt,
+        });
+      } catch {
+        const pendingSyncAt = Date.now();
+        await writeLocalMap(map, {
+          storage: "local",
+          createdAt: now,
+          updatedAt: pendingSyncAt,
+          pendingSyncAt,
+        });
+      }
+      return map;
     }
+
+    await writeLocalMap(map, {
+      storage: "local",
+      createdAt: now,
+      updatedAt: now,
+      pendingSyncAt: null,
+      lastSyncedAt: null,
+    });
+
     return map;
+  } catch (error) {
+    throw createStorageError("create map", error);
   }
-
-  await writeLocalMap(map, "local", now);
-
-  return map;
 }
 
 export async function getMap(id: string): Promise<MindMap | null> {
-  const userId = await getUserId();
+  try {
+    const userId = await getUserId();
 
-  if (userId) {
-    try {
-      const row = await cloudGetMap(id);
-      if (row?.doc) {
-        await writeLocalMap(row.doc, "cloud");
-        return row.doc;
+    if (userId) {
+      const localMeta = (await readIndex()).find((item) => item.id === id);
+      if (localMeta?.pendingSyncAt != null) {
+        const localMap = await getLocalMap(id);
+        if (localMap) {
+          return localMap;
+        }
       }
-    } catch {
-      const raw = await AsyncStorage.getItem(DOC_KEY(id));
-      const doc = safeParse<{ schemaVersion: number; map: MindMap }>(raw);
-      return doc?.map ?? null;
+
+      try {
+        const row = await cloudGetMap(id);
+        if (row?.doc) {
+          const updatedAt = isoToMs(row.updated_at);
+          await cacheCloudMap(row.doc, {
+            createdAt: isoToMs(row.created_at),
+            updatedAt,
+            lastSyncedAt: updatedAt,
+          });
+          return row.doc;
+        }
+      } catch {
+        return getLocalMap(id);
+      }
+
+      return getLocalMap(id);
     }
 
     return getLocalMap(id);
+  } catch (error) {
+    throw createStorageError("load map", error, id);
   }
+}
 
-  return getLocalMap(id);
+export async function loadMap(id: string): Promise<MindMap | null> {
+  return getMap(id);
 }
 
 export async function saveMap(map: MindMap): Promise<void> {
-  const userId = await getUserId();
-  const mapToSave = layoutStructuredMap(map);
+  try {
+    const userId = await getUserId();
+    const mapToSave = layoutStructuredMap(map);
 
-  if (userId) {
-    try {
-      await cloudUpsertMap(mapToSave, SCHEMA_VERSION);
-      await writeLocalMap(mapToSave, "cloud");
-    } catch {
-      await writeLocalMap(mapToSave, "local");
+    if (userId) {
+      try {
+        const syncedAt = await cloudUpsertMap(mapToSave, SCHEMA_VERSION);
+        await writeLocalMap(mapToSave, {
+          storage: "cloud",
+          updatedAt: syncedAt,
+          pendingSyncAt: null,
+          lastSyncedAt: syncedAt,
+        });
+      } catch {
+        const pendingSyncAt = Date.now();
+        await writeLocalMap(mapToSave, {
+          storage: "local",
+          updatedAt: pendingSyncAt,
+          pendingSyncAt,
+        });
+      }
+      return;
     }
-    return;
-  }
 
-  await writeLocalMap(mapToSave, "local");
+    await writeLocalMap(mapToSave, {
+      storage: "local",
+    });
+  } catch (error) {
+    throw createStorageError("save map", error, map.id);
+  }
 }
 
 export async function deleteMap(id: string): Promise<void> {
-  const userId = await getUserId();
+  try {
+    const userId = await getUserId();
 
-  if (userId) {
-    try {
-      await cloudSoftDeleteMap(id);
-    } catch {
+    if (userId) {
+      try {
+        await cloudSoftDeleteMap(id);
+      } catch {
+      }
+      await AsyncStorage.removeItem(DOC_KEY(id));
+      const index = await readIndex();
+      await writeIndex(index.filter((m) => m.id !== id));
+      return;
     }
+
     await AsyncStorage.removeItem(DOC_KEY(id));
     const index = await readIndex();
     await writeIndex(index.filter((m) => m.id !== id));
-    return;
+  } catch (error) {
+    throw createStorageError("delete map", error, id);
   }
-
-  await AsyncStorage.removeItem(DOC_KEY(id));
-  const index = await readIndex();
-  await writeIndex(index.filter((m) => m.id !== id));
 }
 
 export async function renameMap(id: string, title: string): Promise<void> {
-  const map = await getMap(id);
-  if (!map) return;
-  await saveMap({ ...map, title });
+  try {
+    const map = await getMap(id);
+    if (!map) return;
+    await saveMap({ ...map, title });
+  } catch (error) {
+    throw createStorageError("rename map", error, id);
+  }
 }
 
 export async function exportMapXmind(id: string, dialogTitle?: string): Promise<void> {
-  const map = await getMap(id);
-  if (!map) throw new Error("Map not found");
-  await exportXmind(map, dialogTitle);
+  try {
+    const map = await getMap(id);
+    if (!map) throw new Error("Map not found");
+    await exportXmind(map, dialogTitle);
+  } catch (error) {
+    throw createStorageError("export map", error, id);
+  }
 }

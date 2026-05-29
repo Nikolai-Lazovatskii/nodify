@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/EdgeView.tsx
+ * Abstrakt: Vykresľuje vizuálnu hranu medzi uzlami myšlienkovej mapy.
+ */
 import React, { memo, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { G, Path, Polygon } from "react-native-svg";

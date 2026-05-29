@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/mapScreen/constants.ts
+ * Abstrakt: Definuje konštanty používané editorom myšlienkovej mapy.
+ */
 import { RelationshipEdge } from "@/src/types/map";
 
 export const DEFAULT_RELATIONSHIP_EDGE: Pick<RelationshipEdge, "style" | "width" | "color"> = {

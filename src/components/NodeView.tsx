@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/NodeView.tsx
+ * Abstrakt: Zobrazuje statický uzol mapy s vizuálnym stavom a základnými vlastnosťami.
+ */
 import React from 'react';
 import { Circle, Text as SvgText } from 'react-native-svg';
 import { MindMapNode } from '../types/map';

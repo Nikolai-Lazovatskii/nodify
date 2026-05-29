@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/mapScreen/uiStyles.ts
+ * Abstrakt: Definuje pomocné štýly a farebné hodnoty používané editorom mapy.
+ */
 import { StyleSheet } from "react-native";
 
 export const ui = StyleSheet.create({

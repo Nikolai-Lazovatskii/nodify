@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/import/mm.ts
+ * Abstrakt: Parsuje XML formát FreeMind a prevádza ho na internú myšlienkovú mapu.
+ */
 import { MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
 
 type ParsedXmlNode = {

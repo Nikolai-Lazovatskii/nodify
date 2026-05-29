@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/components/EditableNodeView.tsx
+ * Abstrakt: Zobrazuje a upravuje jeden uzol mapy vrátane interakcií a lokálneho vstupu.
+ */
 import React, { memo, useEffect, useMemo, useRef } from "react";
 import {
   Animated,

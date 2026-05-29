@@ -1,5 +1,20 @@
+/**
+ * Súbor: src/screens/mapScreen/MapScreenImpl.tsx
+ * Abstrakt: Implementuje hlavnú logiku editora mapy, uzlov, gest, hľadania a nástrojov.
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, InteractionManager, Keyboard, PixelRatio, Platform, Pressable, Text, TextInput, useWindowDimensions, View } from "react-native";
+import {
+  ActivityIndicator,
+  InteractionManager,
+  Keyboard,
+  PixelRatio,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Defs, G, Pattern, Rect, Text as SvgText } from "react-native-svg";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -31,8 +46,10 @@ import {
 } from "./mapModel";
 import {
   estimateNodeHalfBounds,
+  findNearestInsertionSlot,
   getDisplayNodeTitle,
   getNodeImageAttachment,
+  INSERTION_SLOT_X_GAP,
   makeNodeRouteRect,
   NODE_IMAGE_THUMB_SIZE,
   nearestRouteObstacles,
@@ -60,13 +77,6 @@ type WorldViewport = {
 type CommittedRoute = {
   id: string;
   points: EdgePoint[];
-};
-
-type InsertionSlot = {
-  parentId: string;
-  index: number;
-  side: -1 | 1;
-  distance: number;
 };
 
 function viewportContainsNode(viewport: WorldViewport, node: MindMapNode, isRoot: boolean) {
@@ -160,109 +170,6 @@ function getStructuredTreeEdgePoints(parentNode: MindMapNode, childNode: MindMap
     { x: childEntryX, y: childNode.y },
     { x: childNode.x, y: childNode.y },
   ];
-}
-
-function collectDescendantIds(nodes: Record<string, MindMapNode>, nodeId: string) {
-  const descendants = new Set<string>();
-  const visit = (id: string) => {
-    const node = nodes[id];
-    if (!node) {
-      return;
-    }
-
-    for (const childId of node.children) {
-      if (descendants.has(childId)) {
-        continue;
-      }
-      descendants.add(childId);
-      visit(childId);
-    }
-  };
-
-  visit(nodeId);
-  return descendants;
-}
-
-function getBranchSide(map: MindMap, parent: MindMapNode, child?: MindMapNode): -1 | 1 {
-  const root = map.nodes[map.rootId];
-  if (parent.id === map.rootId) {
-    if (child) {
-      return child.x < parent.x ? -1 : 1;
-    }
-    return 1;
-  }
-
-  return parent.x < (root?.x ?? 0) ? -1 : 1;
-}
-
-function estimateSlotY(children: MindMapNode[], index: number, parentY: number) {
-  const gap = 112;
-  if (children.length === 0) {
-    return parentY;
-  }
-  if (index <= 0) {
-    return children[0].y - gap;
-  }
-  if (index >= children.length) {
-    return children[children.length - 1].y + gap;
-  }
-  return (children[index - 1].y + children[index].y) / 2;
-}
-
-function findNearestInsertionSlot(map: MindMap, nodeId: string, x: number, y: number): InsertionSlot | null {
-  const movingNode = map.nodes[nodeId];
-  const root = map.nodes[map.rootId];
-  if (!movingNode || !root || nodeId === map.rootId) {
-    return null;
-  }
-
-  const visibleIds = collectVisibleNodeIds(map);
-  const descendants = collectDescendantIds(map.nodes, nodeId);
-  let best: InsertionSlot | null = null;
-
-  const consider = (parent: MindMapNode, side: -1 | 1, children: MindMapNode[]) => {
-    for (let index = 0; index <= children.length; index += 1) {
-      const slotX = parent.x + side * 230;
-      const slotY = estimateSlotY(children, index, parent.y);
-      const dx = Math.abs(x - slotX);
-      const dy = Math.abs(y - slotY);
-      const distance = dx * 0.85 + dy;
-
-      if (!best || distance < best.distance) {
-        best = {
-          parentId: parent.id,
-          index,
-          side,
-          distance,
-        };
-      }
-    }
-  };
-
-  for (const parent of Object.values(map.nodes)) {
-    if (parent.id === nodeId || descendants.has(parent.id) || !visibleIds.has(parent.id)) {
-      continue;
-    }
-
-    const childNodes = parent.children
-      .map((childId) => map.nodes[childId])
-      .filter((child): child is MindMapNode =>
-        !!child && child.id !== nodeId && !descendants.has(child.id) && visibleIds.has(child.id)
-      )
-      .sort((a, b) => a.y - b.y);
-
-    if (parent.id === map.rootId) {
-      const leftChildren = childNodes.filter((child) => child.x < parent.x);
-      const rightChildren = childNodes.filter((child) => child.x >= parent.x);
-      consider(parent, -1, leftChildren);
-      consider(parent, 1, rightChildren);
-      continue;
-    }
-
-    consider(parent, getBranchSide(map, parent), childNodes);
-  }
-
-  return best && best.distance <= 360 ? best : null;
 }
 
 export default function MapScreen({ initialMap, onMapChange }: Props) {
@@ -495,7 +402,20 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     }
 
     return nextNodes;
-  }, [changeParentNodeId, largeMapMode, largeMapContentMounted, linkFromId, map.nodes, map.rootId, repositionNodeId, selectedId, viewportCullingEnabled, visibleNodeIds, visibleNodes, worldViewport]);
+  }, [
+    changeParentNodeId,
+    largeMapMode,
+    largeMapContentMounted,
+    linkFromId,
+    map.nodes,
+    map.rootId,
+    repositionNodeId,
+    selectedId,
+    viewportCullingEnabled,
+    visibleNodeIds,
+    visibleNodes,
+    worldViewport,
+  ]);
   const renderedVisibleNodeIds = useMemo(
     () => new Set(renderedVisibleNodes.map((node) => node.id)),
     [renderedVisibleNodes]
@@ -849,7 +769,17 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       worldToSurfaceY(selectedNode.y),
       focusScale
     );
-  }, [canvasScale, changeParentMode, largeMapMode, linkMode, repositionNodeId, selectedEdge, selectedNode, worldToSurfaceX, worldToSurfaceY]);
+  }, [
+    canvasScale,
+    changeParentMode,
+    largeMapMode,
+    linkMode,
+    repositionNodeId,
+    selectedEdge,
+    selectedNode,
+    worldToSurfaceX,
+    worldToSurfaceY,
+  ]);
 
   useEffect(() => {
     if (!largeMapMode || !largeMapVisible || didAutoFitMapIdRef.current === map.id) {
@@ -1102,7 +1032,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             nextNodes[nodeId] = {
               ...node,
               parentId: target.id,
-              x: target.x + slot.side * 230,
+              x: target.x + slot.side * INSERTION_SLOT_X_GAP,
               y,
               edgeToParent: node.edgeToParent ?? { style: "solid", width: 2, color: "#9ca3af" },
             };
@@ -1154,7 +1084,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         id: newId,
         parentId: parent.id,
         title: t("map.newNode"),
-        x: parent.x + parentSide * 230,
+        x: parent.x + parentSide * INSERTION_SLOT_X_GAP,
         y: parent.y,
         children: [],
         size: 30,
@@ -1879,17 +1809,36 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                 </View>
                 <View style={[ui.topActions, isLandscape && ui.topActionsLandscape]}>
                   {selectedNode ? (
-                    <Pressable onPress={addChildToSelected} style={({ pressed }) => [ui.actionButton, ui.primaryButton, pressed && ui.pressed]}>
+                    <Pressable
+                      onPress={addChildToSelected}
+                      style={({ pressed }) => [ui.actionButton, ui.primaryButton, pressed && ui.pressed]}
+                    >
                       <Text style={ui.primaryButtonText}>＋</Text>
                     </Pressable>
                   ) : null}
                   {selectedNode ? (
-                    <Pressable onPress={startLinkMode} style={({ pressed }) => [ui.actionButton, ui.secondaryButton, isDark && ui.secondaryButtonDark, pressed && ui.pressed]}>
+                    <Pressable
+                      onPress={startLinkMode}
+                      style={({ pressed }) => [
+                        ui.actionButton,
+                        ui.secondaryButton,
+                        isDark && ui.secondaryButtonDark,
+                        pressed && ui.pressed,
+                      ]}
+                    >
                       <Text style={[ui.secondaryButtonText, isDark && ui.secondaryButtonTextDark]}>{t("map.link")}</Text>
                     </Pressable>
                   ) : null}
                   {selectedNode && selectedNode.id !== map.rootId ? (
-                    <Pressable onPress={startChangeParentMode} style={({ pressed }) => [ui.actionButton, ui.secondaryButton, isDark && ui.secondaryButtonDark, pressed && ui.pressed]}>
+                    <Pressable
+                      onPress={startChangeParentMode}
+                      style={({ pressed }) => [
+                        ui.actionButton,
+                        ui.secondaryButton,
+                        isDark && ui.secondaryButtonDark,
+                        pressed && ui.pressed,
+                      ]}
+                    >
                       <Text style={[ui.secondaryButtonText, isDark && ui.secondaryButtonTextDark]}>{t("map.changeParent")}</Text>
                     </Pressable>
                   ) : null}

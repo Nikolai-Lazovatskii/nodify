@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/storage/profileRepo.ts
+ * Abstrakt: Spravuje načítanie a uloženie profilu prihláseného používateľa.
+ */
 import { supabase } from "../lib/supabase";
 
 export type Profile = {

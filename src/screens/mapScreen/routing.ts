@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/mapScreen/routing.ts
+ * Abstrakt: Počíta trasy, kotviace body a geometriu spojníc medzi uzlami.
+ */
 import type { EdgePoint } from "@/src/components/EdgeView";
 import { MindMapNode, NodeAttachment } from "@/src/types/map";
 
@@ -16,8 +20,18 @@ export type RoutedEdge = {
   points?: EdgePoint[];
 };
 
+export type InsertionSlot = {
+  parentId: string;
+  index: number;
+  side: -1 | 1;
+  distance: number;
+};
+
 export const NODE_TITLE_DISPLAY_MAX = 20;
 export const NODE_IMAGE_THUMB_SIZE = 18;
+export const INSERTION_SLOT_X_GAP = 230;
+export const INSERTION_SLOT_Y_GAP = 112;
+export const INSERTION_SLOT_MAX_DISTANCE = 360;
 
 export function isImageAttachment(attachment: NodeAttachment | undefined) {
   if (!attachment) {
@@ -382,4 +396,143 @@ export function nearestRouteObstacles(
   }
 
   return ranked.map((item) => item.rect);
+}
+
+function collectDescendantIds(nodes: Record<string, MindMapNode>, nodeId: string): Set<string> {
+  const descendants = new Set<string>();
+  const visitNode = (id: string): void => {
+    const node = nodes[id];
+    if (!node) {
+      return;
+    }
+
+    for (const childId of node.children) {
+      if (descendants.has(childId)) {
+        continue;
+      }
+      descendants.add(childId);
+      visitNode(childId);
+    }
+  };
+
+  visitNode(nodeId);
+  return descendants;
+}
+
+function getBranchSide(map: { rootId: string; nodes: Record<string, MindMapNode> }, parent: MindMapNode, child?: MindMapNode): -1 | 1 {
+  const root = map.nodes[map.rootId];
+  if (parent.id === map.rootId) {
+    if (child) {
+      return child.x < parent.x ? -1 : 1;
+    }
+    return 1;
+  }
+
+  return parent.x < (root?.x ?? 0) ? -1 : 1;
+}
+
+function estimateInsertionSlotY(children: MindMapNode[], index: number, parentY: number): number {
+  if (children.length === 0) {
+    return parentY;
+  }
+  if (index <= 0) {
+    return children[0].y - INSERTION_SLOT_Y_GAP;
+  }
+  if (index >= children.length) {
+    return children[children.length - 1].y + INSERTION_SLOT_Y_GAP;
+  }
+  return (children[index - 1].y + children[index].y) / 2;
+}
+
+function getSlotDistance(x: number, y: number, slotX: number, slotY: number): number {
+  const dx = Math.abs(x - slotX);
+  const dy = Math.abs(y - slotY);
+  return dx * 0.85 + dy;
+}
+
+type SortedVisibleChildrenOptions = {
+  map: { nodes: Record<string, MindMapNode> };
+  parent: MindMapNode;
+  movingNodeId: string;
+  descendantIds: Set<string>;
+  visibleIds: Set<string>;
+};
+
+function getSortedVisibleChildren(options: SortedVisibleChildrenOptions): MindMapNode[] {
+  const { map, parent, movingNodeId, descendantIds, visibleIds } = options;
+  return parent.children
+    .map((childId) => map.nodes[childId])
+    .filter((child): child is MindMapNode =>
+      !!child &&
+      child.id !== movingNodeId &&
+      !descendantIds.has(child.id) &&
+      visibleIds.has(child.id)
+    )
+    .sort((a, b) => a.y - b.y);
+}
+
+export function findNearestInsertionSlot(
+  map: { rootId: string; nodes: Record<string, MindMapNode> },
+  nodeId: string,
+  x: number,
+  y: number
+): InsertionSlot | null {
+  const movingNode = map.nodes[nodeId];
+  const root = map.nodes[map.rootId];
+  if (!movingNode || !root || nodeId === map.rootId) {
+    return null;
+  }
+
+  const visibleIds = new Set<string>();
+  const visitVisibleNode = (visibleNodeId: string): void => {
+    const node = map.nodes[visibleNodeId];
+    if (!node || visibleIds.has(visibleNodeId)) {
+      return;
+    }
+
+    visibleIds.add(visibleNodeId);
+    if (!node.collapsed) {
+      node.children.forEach(visitVisibleNode);
+    }
+  };
+  visitVisibleNode(map.rootId);
+
+  const descendants = collectDescendantIds(map.nodes, nodeId);
+  let bestSlot: InsertionSlot | null = null;
+  const considerSlot = (parent: MindMapNode, side: -1 | 1, children: MindMapNode[]): void => {
+    for (let index = 0; index <= children.length; index += 1) {
+      const slotX = parent.x + side * INSERTION_SLOT_X_GAP;
+      const slotY = estimateInsertionSlotY(children, index, parent.y);
+      const distance = getSlotDistance(x, y, slotX, slotY);
+
+      if (!bestSlot || distance < bestSlot.distance) {
+        bestSlot = { parentId: parent.id, index, side, distance };
+      }
+    }
+  };
+
+  for (const parent of Object.values(map.nodes)) {
+    if (parent.id === nodeId || descendants.has(parent.id) || !visibleIds.has(parent.id)) {
+      continue;
+    }
+
+    const childNodes = getSortedVisibleChildren({
+      map,
+      parent,
+      movingNodeId: nodeId,
+      descendantIds: descendants,
+      visibleIds,
+    });
+
+    if (parent.id === map.rootId) {
+      considerSlot(parent, -1, childNodes.filter((child) => child.x < parent.x));
+      considerSlot(parent, 1, childNodes.filter((child) => child.x >= parent.x));
+      continue;
+    }
+
+    considerSlot(parent, getBranchSide(map, parent), childNodes);
+  }
+
+  const nearestSlot = bestSlot as InsertionSlot | null;
+  return nearestSlot && nearestSlot.distance <= INSERTION_SLOT_MAX_DISTANCE ? nearestSlot : null;
 }

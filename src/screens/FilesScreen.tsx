@@ -1,3 +1,7 @@
+/**
+ * Súbor: src/screens/FilesScreen.tsx
+ * Abstrakt: Zobrazuje obrazovku súborov ako jednoduchý vstupný bod na prácu so súbormi.
+ */
 import { View, Text, StyleSheet } from 'react-native';
 
 export default function FilesScreen() {
