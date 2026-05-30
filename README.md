@@ -179,6 +179,9 @@ Práca sa zameriava na:
 - offline ukladanie a synchronizáciu naprieč zariadeniami,
 - meranie výkonu editora pri práci s veľkými mapami.
 
+Oficialna web stranka:
+https://davinci.fmph.uniba.sk/~lazovatskii1/
+
 ## Zhrnutie
 
 Nodify poskytuje mobilný editor myšlienkových máp s podporou importu a exportu bežných formátov, lokálnym offline ukladaním a voliteľnou cloudovou synchronizáciou. Aktuálna verzia slúži ako funkčný prototyp pre bakalársku prácu a zároveň ako základ pre ďalší vývoj plnohodnotnej multiplatformovej aplikácie.
