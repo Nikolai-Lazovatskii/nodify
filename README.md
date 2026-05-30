@@ -1,6 +1,6 @@
 # Nodify
 
-Nodify je multiplatformová mobilná aplikácia na tvorbu, úpravu, vizualizáciu a prenos myšlienkových máp medzi mobilným zariadením a bežnými desktopovými nástrojmi.
+Nodify je mobilná aplikácia na tvorbu, úpravu, vizualizáciu a prenos myšlienkových máp medzi mobilným zariadením a bežnými desktopovými nástrojmi.
 
 Projekt vzniká ako praktická časť bakalárskej práce na **Univerzite Komenského v Bratislave**. Zameriava sa najmä na interoperabilitu formátov **XMind (.xmind)** a **FreeMind (.mm)**, dotykové ovládanie editora a offline-first prístup s voliteľnou cloudovou synchronizáciou.
 
@@ -132,18 +132,6 @@ npx eas-cli@latest build -p android --profile production
 ```
 
 Profil `production` generuje Android App Bundle (`.aab`), nie priamo inštalovateľný APK.
-
-## Odporúčaný Kontrolný Zoznam Pred Odovzdaním
-
-- aplikácia sa spustí bez pádu,
-- anonymný režim vie vytvoriť, upraviť a znova načítať mapu,
-- prihlásený používateľ vie uložiť mapu do cloudu,
-- offline zmeny sa po obnovení internetu synchronizujú,
-- konflikt medzi lokálnou a cloudovou verziou zobrazí dialóg výberu verzie,
-- import `.mm` a `.xmind` súborov zachová základnú stromovú štruktúru,
-- exportované súbory je možné znova otvoriť,
-- veľké mapy sa dajú posúvať a približovať bez kritického zasekávania,
-- `npx tsc --noEmit` a `npx jest` prejdú bez chýb.
 
 ## Štruktúra Projektu
 
