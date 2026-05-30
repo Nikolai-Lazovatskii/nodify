@@ -101,6 +101,10 @@ Výstupy benchmarku:
 
 Pre vytvorenie inštalovateľného Android APK buildu sa používa EAS profil `preview`. Tento profil je nastavený v `eas.json` tak, aby generoval súbor `.apk`, ktorý je možné nainštalovať priamo na Android zariadenie.
 
+Aktuálny testovací APK build je dostupný na adrese:
+
+https://expo.dev/accounts/nicolasray/projects/Nodify/builds/956f2d2f-2d89-47ca-94ad-a5381a7f3fe2
+
 Prihlásenie do Expo účtu:
 
 ```bash
