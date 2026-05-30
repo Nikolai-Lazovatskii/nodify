@@ -12,5 +12,5 @@ Meranie výkonu bolo spustené na vývojovom zariadení MacBook-Air-Nicolas.loca
 
 ## Poznámka k interpretácii
 
-Pri najväčšej mape mal baseline medián simulovaného rámca 0.37 ms, zatiaľ čo optimalizovaná konfigurácia mala 0.19 ms. Súbor results.csv obsahuje surové opakovania merania a summary.csv agregované mediány s IQR.
+Pri najväčšej mape mal baseline medián simulovaného rámca 0.36 ms, zatiaľ čo optimalizovaná konfigurácia mala 0.2 ms. Súbor results.csv obsahuje surové opakovania merania a summary.csv agregované mediány s IQR.
 Ablácia bez cache trás je dostupná prepínačom --conditions=noRouteCache, ale nie je súčasťou predvoleného behu, pretože pri malých mapách zámerne vytvára extrémne pomalý stresový scenár routovania.

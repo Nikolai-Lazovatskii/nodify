@@ -172,6 +172,33 @@ function getStructuredTreeEdgePoints(parentNode: MindMapNode, childNode: MindMap
   ];
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getNextDefaultNodeTitle(nodes: Record<string, MindMapNode>, localizedBaseTitle: string) {
+  const knownBaseTitles = Array.from(new Set([localizedBaseTitle, "New node", "Nový uzol"]));
+  let highestIndex = 0;
+
+  for (const node of Object.values(nodes)) {
+    const title = node.title.trim();
+
+    for (const baseTitle of knownBaseTitles) {
+      if (title === baseTitle) {
+        highestIndex = Math.max(highestIndex, 1);
+        continue;
+      }
+
+      const match = title.match(new RegExp(`^${escapeRegExp(baseTitle)}\\s+(\\d+)$`));
+      if (match) {
+        highestIndex = Math.max(highestIndex, Number(match[1]));
+      }
+    }
+  }
+
+  return `${localizedBaseTitle} ${highestIndex + 1}`;
+}
+
 export default function MapScreen({ initialMap, onMapChange }: Props) {
   const { t } = useTranslation();
   const colorScheme = useColorScheme() ?? "light";
@@ -1083,7 +1110,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       const child: MindMapNode = {
         id: newId,
         parentId: parent.id,
-        title: t("map.newNode"),
+        title: getNextDefaultNodeTitle(prev.nodes, t("map.newNode")),
         x: parent.x + parentSide * INSERTION_SLOT_X_GAP,
         y: parent.y,
         children: [],
