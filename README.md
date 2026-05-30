@@ -2,22 +2,22 @@
 
 Nodify je mobilná aplikácia na tvorbu, úpravu, vizualizáciu a prenos myšlienkových máp medzi mobilným zariadením a bežnými desktopovými nástrojmi.
 
-Projekt vzniká ako praktická časť bakalárskej práce na **Univerzite Komenského v Bratislave**. Zameriava sa najmä na interoperabilitu formátov **XMind (.xmind)** a **FreeMind (.mm)**, dotykové ovládanie editora a offline-first prístup s voliteľnou cloudovou synchronizáciou.
+Projekt vznikol ako praktická časť bakalárskej práce na **Univerzite Komenského v Bratislave**. Zameriava sa najmä na interoperabilitu formátov **XMind (.xmind)** a **FreeMind (.mm)**, dotykové ovládanie editora a offline-first prístup s voliteľnou cloudovou synchronizáciou.
 
-## Hlavné Funkcie
+## Hlavné funkcie
 
 - vytváranie, úprava, mazanie a preusporiadanie uzlov myšlienkovej mapy,
 - pan, zoom a drag interakcie optimalizované pre dotykové zariadenia,
 - import a export máp vo formátoch **FreeMind (.mm)** a **XMind (.xmind)**,
 - lokálne offline ukladanie pomocou AsyncStorage,
 - používateľské účty a cloudová synchronizácia cez Supabase,
-- riešenie konfliktov pri úpravách tej istej mapy na viacerých zariadeniach,
+- detekcia konfliktov pri úpravách tej istej mapy na viacerých zariadeniach (offline úpravy sa neprepíšu cloudovou verziou; plnohodnotné riešenie konfliktov je predmetom ďalšieho vývoja),
 - anonymný režim bez cloudovej synchronizácie,
 - vizuálne indikátory stavu synchronizácie,
 - optimalizované renderovanie veľkých máp s limitovaným počtom spracovaných hrán za rámec,
 - reprodukovateľné benchmarky výkonu editora v priečinku `benchmarks/`.
 
-## Tech Stack
+## Tech stack
 
 - **React Native** a **Expo** - multiplatformová aplikácia pre Android a iOS
 - **TypeScript** - typová bezpečnosť a udržiavateľná kódová základňa
@@ -30,15 +30,16 @@ Projekt vzniká ako praktická časť bakalárskej práce na **Univerzite Komens
 
 ## Požiadavky
 
-- Node.js
-- npm
-- Expo tooling
-- Android Studio alebo fyzické Android zariadenie pre lokálne testovanie
-- účet Expo/EAS pre cloudový Android build
+- **Node.js** 22.13.1 alebo novší (≥ 22)
+- **npm** (dodávané s Node.js)
+- **Expo SDK** ~54 a **Expo CLI**
+- **React Native** 0.81.5 (spravované cez Expo)
+- **Android Studio** alebo fyzické Android zariadenie pre lokálne testovanie
+- účet **Expo/EAS** pre cloudový Android build
 
-## Lokálne Spustenie
+## Lokálne spustenie
 
-Nainštalovanie závislostí:
+Inštalácia závislostí:
 
 ```bash
 npm install
@@ -62,14 +63,22 @@ Pre natívne Android spustenie:
 npm run android
 ```
 
-## Konfigurácia Prostredia
+## Konfigurácia prostredia
 
-Aplikácia používa Supabase pre prihlásenie a synchronizáciu. Lokálne hodnoty sa načítavajú z `.env`:
+Aplikácia používa Supabase pre prihlásenie a synchronizáciu. Pre lokálne spustenie skopírujte vzorový súbor a doplňte vlastné hodnoty:
+
+```bash
+cp .env.example .env
+```
 
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 ```
+
+Uvádza sa výhradne verejný (anon) kľúč, ktorý je pri zapnutej Row Level Security bezpečné sprístupniť v klientovi. Servisný (`service_role`) kľúč ani reálny súbor `.env` so súkromnými údajmi nikdy nepatria do repozitára.
+
+Bez týchto hodnôt aplikácia spustená zo zdrojového kódu funguje v anonymnom/offline režime (cloudové funkcie sú vypnuté). Pre plnú reprodukciu cloudových funkcií zo zdrojového kódu je potrebný vlastný Supabase projekt so zodpovedajúcou databázovou schémou; plný cloudový režim je zároveň dostupný cez priložený APK build napojený na referenčný backend.
 
 Pri EAS builde musia byť tieto hodnoty dostupné aj v prostredí buildu, inak bude zostavená aplikácia fungovať iba bez cloudových funkcií.
 
@@ -97,13 +106,15 @@ Výstupy benchmarku:
 - `benchmarks/frame-time.svg` - graf času rámca,
 - `benchmarks/methodology.sk.md` - metodika merania v slovenčine.
 
-## Android APK Build A Inštalácia
+## Android APK build a inštalácia
 
 Pre vytvorenie inštalovateľného Android APK buildu sa používa EAS profil `preview`. Tento profil je nastavený v `eas.json` tak, aby generoval súbor `.apk`, ktorý je možné nainštalovať priamo na Android zariadenie.
 
 Aktuálny testovací APK build je dostupný na adrese:
 
 https://expo.dev/accounts/nicolasray/projects/Nodify/builds/956f2d2f-2d89-47ca-94ad-a5381a7f3fe2
+
+Inštalovateľný `.apk` je priložený aj v elektronickej prílohe záverečnej práce v systéme AIS.
 
 Prihlásenie do Expo účtu:
 
@@ -125,6 +136,8 @@ Po dokončení buildu EAS vypíše URL odkaz. Postup inštalácie:
 4. Nainštalujte aplikáciu Nodify.
 5. Po spustení overte anonymný režim, prihlásenie, lokálne ukladanie, import/export a synchronizáciu.
 
+Na iOS je aplikáciu možné spustiť cez Expo Go alebo iOS simulátor (macOS); samostatný iOS build nie je súčasťou tohto repozitára a vyžaduje Apple Developer účet.
+
 Produkčný build pre Google Play sa vytvára samostatným profilom:
 
 ```bash
@@ -133,7 +146,7 @@ npx eas-cli@latest build -p android --profile production
 
 Profil `production` generuje Android App Bundle (`.aab`), nie priamo inštalovateľný APK.
 
-## Štruktúra Projektu
+## Štruktúra projektu
 
 - `app/` - obrazovky a navigácia Expo Routera
 - `src/screens/` - hlavné obrazovky aplikácie
@@ -147,7 +160,7 @@ Profil `production` generuje Android App Bundle (`.aab`), nie priamo inštalovat
 - `src/i18n/` - jazykové preklady
 - `benchmarks/` - reprodukovateľné merania výkonu
 
-## Verejné Dátové Typy
+## Verejné dátové typy
 
 ### `MindMapNode`
 
@@ -167,7 +180,7 @@ Umiestnenie: `src/types/map.ts`
 
 Reprezentuje metadata uložených máp. Obsahuje informácie o názve, dátumoch vytvorenia a úpravy, pôvode mapy, stave synchronizácie a poliach `pendingSyncAt` a `lastSyncedAt` pre offline-first synchronizáciu.
 
-## Bakalárska Práca
+## Bakalárska práca
 
 Repozitár je súčasťou praktickej implementácie bakalárskej práce na **Univerzite Komenského v Bratislave**.
 
@@ -179,7 +192,7 @@ Práca sa zameriava na:
 - offline ukladanie a synchronizáciu naprieč zariadeniami,
 - meranie výkonu editora pri práci s veľkými mapami.
 
-Oficialna web stranka:
+Oficiálna webová stránka:
 https://davinci.fmph.uniba.sk/~lazovatskii1/
 
 ## Zhrnutie
