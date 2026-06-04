@@ -233,13 +233,21 @@ function uuidv4(): string {
 }
 
 async function getUserId(): Promise<string | null> {
-  const session = await supabase.auth.getSession();
-  const sessionUserId = session.data.session?.user?.id;
-  if (sessionUserId) return sessionUserId;
+  try {
+    const session = await supabase.auth.getSession();
+    const sessionUserId = session.data.session?.user?.id;
+    if (sessionUserId) return sessionUserId;
+  } catch {
+    return null;
+  }
 
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return null;
-  return data.user?.id ?? null;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) return null;
+    return data.user?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function isoToMs(iso: string | null | undefined): number {

@@ -9,23 +9,50 @@ import { JsonValue, MindMap, MindMapNode, NodeAttachment, NodeShape, Relationshi
 type XMindTopic = {
   id?: string;
   title?: string;
+  href?: string;
+  hyperlink?: string;
+  url?: string;
+  link?: string;
   labels?: string[];
   branch?: string;
+  styleId?: string;
   notes?: {
     plain?: {
       content?: string;
     };
   };
   relationship?: unknown;
+  topics?: XMindTopic | XMindTopic[];
   children?: {
-    attached?: XMindTopic | XMindTopic[];
-    detached?: XMindTopic | XMindTopic[];
+    attached?: XMindChildrenBucket;
+    detached?: XMindChildrenBucket;
     [key: string]: unknown;
   };
   style?: {
     properties?: Record<string, string | undefined>;
     [key: string]: unknown;
   };
+  extensions?: unknown;
+  nodify?: unknown;
+  position?: unknown;
+  location?: unknown;
+  offset?: unknown;
+  coordinates?: unknown;
+  x?: unknown;
+  X?: unknown;
+  left?: unknown;
+  y?: unknown;
+  Y?: unknown;
+  top?: unknown;
+  image?: unknown;
+  images?: unknown;
+  img?: unknown;
+  "xhtml:img"?: unknown;
+  "svg:image"?: unknown;
+  "image-src"?: string;
+  imageSrc?: string;
+  imageUrl?: string;
+  "image-url"?: string;
   [key: string]: unknown;
 };
 
@@ -49,7 +76,7 @@ type XMindSheet = {
   [key: string]: unknown;
 };
 
-type XMindChildrenBucket = XMindTopic | XMindTopic[] | { topics?: XMindTopic | XMindTopic[] } | undefined;
+type XMindChildrenBucket = XMindTopic | XMindTopic[] | undefined;
 type StyleProperties = Record<string, string | undefined>;
 
 type XMindImageResolver = (topic: XMindTopic, nodeId: string) => Promise<NodeAttachment | undefined>;
@@ -85,12 +112,11 @@ function asTopics(value: XMindChildrenBucket): XMindTopic[] {
     return value;
   }
 
-  if (isRecord(value) && "topics" in value) {
-    const topics = (value as { topics?: XMindTopic | XMindTopic[] }).topics;
-    return asArray(topics);
+  if (value.topics) {
+    return asArray(value.topics);
   }
 
-  return [value as XMindTopic];
+  return [value];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -421,11 +447,10 @@ function resolveTopicFillColor(topic: XMindTopic, styleLookup: Map<string, Style
     return directColor;
   }
 
-  const rawTopic = topic as Record<string, unknown>;
   const styleIdCandidates = [
     typeof topic.style === "string" ? topic.style : undefined,
     typeof topicStyle?.id === "string" ? topicStyle.id : undefined,
-    typeof rawTopic.styleId === "string" ? (rawTopic.styleId as string) : undefined,
+    typeof topic.styleId === "string" ? topic.styleId : undefined,
   ]
     .map((id) => (id ?? "").trim())
     .filter(Boolean);
@@ -437,7 +462,7 @@ function resolveTopicFillColor(topic: XMindTopic, styleLookup: Map<string, Style
     }
   }
 
-  const extensionColor = readFillColorFromNestedObject((topic as Record<string, unknown>).extensions);
+  const extensionColor = readFillColorFromNestedObject(topic.extensions);
   if (extensionColor) {
     return extensionColor;
   }
@@ -457,11 +482,10 @@ function resolveTopicLineColor(topic: XMindTopic, styleLookup: Map<string, Style
     return directColor;
   }
 
-  const rawTopic = topic as Record<string, unknown>;
   const styleIdCandidates = [
     typeof topic.style === "string" ? topic.style : undefined,
     typeof topicStyle?.id === "string" ? topicStyle.id : undefined,
-    typeof rawTopic.styleId === "string" ? (rawTopic.styleId as string) : undefined,
+    typeof topic.styleId === "string" ? topic.styleId : undefined,
   ]
     .map((id) => (id ?? "").trim())
     .filter(Boolean);
@@ -473,7 +497,7 @@ function resolveTopicLineColor(topic: XMindTopic, styleLookup: Map<string, Style
     }
   }
 
-  const extensionLineColor = readLineColorFromNestedObject((topic as Record<string, unknown>).extensions);
+  const extensionLineColor = readLineColorFromNestedObject(topic.extensions);
   if (extensionLineColor) {
     return extensionLineColor;
   }
@@ -545,12 +569,11 @@ function parsePositionNumber(raw: unknown): number | undefined {
 }
 
 function readTopicPosition(topic: XMindTopic): { x: number; y: number } | undefined {
-  const rawTopic = topic as Record<string, unknown>;
   const candidates = [
-    rawTopic.position,
-    rawTopic.location,
-    rawTopic.offset,
-    rawTopic.coordinates,
+    topic.position,
+    topic.location,
+    topic.offset,
+    topic.coordinates,
   ];
 
   for (const candidate of candidates) {
@@ -573,13 +596,13 @@ function readTopicPosition(topic: XMindTopic): { x: number; y: number } | undefi
   }
 
   const x =
-    parsePositionNumber(rawTopic.x) ??
-    parsePositionNumber(rawTopic.X) ??
-    parsePositionNumber(rawTopic.left);
+    parsePositionNumber(topic.x) ??
+    parsePositionNumber(topic.X) ??
+    parsePositionNumber(topic.left);
   const y =
-    parsePositionNumber(rawTopic.y) ??
-    parsePositionNumber(rawTopic.Y) ??
-    parsePositionNumber(rawTopic.top);
+    parsePositionNumber(topic.y) ??
+    parsePositionNumber(topic.Y) ??
+    parsePositionNumber(topic.top);
 
   if (typeof x === "number" && typeof y === "number") {
     return { x, y };
@@ -604,6 +627,14 @@ function mimeFromPath(path: string) {
   if (lower.endsWith(".svg")) return "image/svg+xml";
   if (lower.endsWith(".heic")) return "image/heic";
   if (lower.endsWith(".heif")) return "image/heif";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
   return "image/png";
 }
 
@@ -633,13 +664,12 @@ function extractStringField(record: Record<string, unknown>, keys: string[]) {
 }
 
 function readTopicImageSource(topic: XMindTopic): string | undefined {
-  const rawTopic = topic as Record<string, unknown>;
   const candidates = [
-    rawTopic.image,
-    rawTopic.images,
-    rawTopic.img,
-    rawTopic["xhtml:img"],
-    rawTopic["svg:image"],
+    topic.image,
+    topic.images,
+    topic.img,
+    topic["xhtml:img"],
+    topic["svg:image"],
   ];
 
   for (const candidate of candidates) {
@@ -663,7 +693,7 @@ function readTopicImageSource(topic: XMindTopic): string | undefined {
     }
   }
 
-  const src = extractStringField(rawTopic, [
+  const src = extractStringField(topic, [
     "image-src",
     "imageSrc",
     "imageUrl",
@@ -738,6 +768,176 @@ function createXmindImageResolver(zip: JSZip): XMindImageResolver {
   };
 }
 
+function normalizeImportedAttachment(value: unknown): NodeAttachment | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const uri = typeof value.uri === "string" ? value.uri.trim() : "";
+  if (!id || !name || !uri) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    uri,
+    mimeType: typeof value.mimeType === "string" && value.mimeType.trim() ? value.mimeType.trim() : undefined,
+    size: typeof value.size === "number" && Number.isFinite(value.size) ? value.size : undefined,
+  };
+}
+
+function readTopicHrefAttachment(topic: XMindTopic, nodeId: string): NodeAttachment | undefined {
+  const href = extractStringField(topic, ["href", "hyperlink", "url", "link"]);
+  if (!href) {
+    return undefined;
+  }
+
+  return {
+    id: `xmind_href_${nodeId}`,
+    name: getFileNameFromPath(href) || "XMind link",
+    uri: href,
+    mimeType: /^https?:\/\//i.test(href) ? undefined : mimeFromPath(href),
+  };
+}
+
+function mergeImportedAttachments(attachments: (NodeAttachment | undefined)[]) {
+  const merged: NodeAttachment[] = [];
+  const seen = new Set<string>();
+
+  for (const attachment of attachments) {
+    if (!attachment) {
+      continue;
+    }
+
+    const key = attachment.uri.trim() || attachment.id.trim();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(attachment);
+  }
+
+  return merged;
+}
+
+function readNodifyTopicExtension(topic: XMindTopic): {
+  dueAt?: string;
+  attachments?: NodeAttachment[];
+} {
+  const extensions = isRecord(topic.extensions) ? topic.extensions : undefined;
+  const extension = isRecord(extensions?.nodify)
+    ? extensions.nodify
+    : isRecord(topic.nodify)
+      ? topic.nodify
+      : undefined;
+
+  if (!extension) {
+    return {};
+  }
+
+  const dueAt =
+    typeof extension.dueAt === "string" && extension.dueAt.trim() && !Number.isNaN(Date.parse(extension.dueAt))
+      ? extension.dueAt.trim()
+      : undefined;
+  const attachments = Array.isArray(extension.attachments)
+    ? extension.attachments
+        .map(normalizeImportedAttachment)
+        .filter((attachment): attachment is NodeAttachment => !!attachment)
+    : undefined;
+
+  return {
+    dueAt,
+    attachments: attachments?.length ? attachments : undefined,
+  };
+}
+
+type NodifyXmindMetadata = Record<string, {
+  dueAt?: string;
+  attachments?: NodeAttachment[];
+}>;
+
+function parseNodifyXmindMetadata(raw: string | undefined): NodifyXmindMetadata {
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  const root = isRecord(parsed) ? parsed : undefined;
+  const rawNodes = isRecord(root?.nodes) ? root.nodes : undefined;
+  if (!rawNodes) {
+    return {};
+  }
+
+  const metadata: NodifyXmindMetadata = {};
+  for (const [sourceId, rawNode] of Object.entries(rawNodes)) {
+    if (!sourceId.trim() || !isRecord(rawNode)) {
+      continue;
+    }
+
+    const dueAt =
+      typeof rawNode.dueAt === "string" && rawNode.dueAt.trim() && !Number.isNaN(Date.parse(rawNode.dueAt))
+        ? rawNode.dueAt.trim()
+        : undefined;
+    const attachments = Array.isArray(rawNode.attachments)
+      ? rawNode.attachments
+          .map(normalizeImportedAttachment)
+          .filter((attachment): attachment is NodeAttachment => !!attachment)
+      : undefined;
+
+    if (dueAt || attachments?.length) {
+      metadata[sourceId.trim()] = {
+        dueAt,
+        attachments: attachments?.length ? attachments : undefined,
+      };
+    }
+  }
+
+  return metadata;
+}
+
+function applyNodifyXmindMetadata(
+  nodes: Record<string, MindMapNode>,
+  sourceTopicToNodeId: Record<string, string>,
+  metadata: NodifyXmindMetadata
+): Record<string, MindMapNode> {
+  if (Object.keys(metadata).length === 0) {
+    return nodes;
+  }
+
+  const nextNodes = { ...nodes };
+
+  for (const [sourceId, nodeMetadata] of Object.entries(metadata)) {
+    const nodeId = sourceTopicToNodeId[sourceId] ?? sourceId;
+    const node = nextNodes[nodeId];
+    if (!node) {
+      continue;
+    }
+
+    const attachments = mergeImportedAttachments([
+      ...(node.attachments ?? []),
+      ...(nodeMetadata.attachments ?? []),
+    ]);
+
+    nextNodes[nodeId] = {
+      ...node,
+      dueAt: nodeMetadata.dueAt ?? node.dueAt,
+      attachments: attachments.length > 0 ? attachments : node.attachments,
+    };
+  }
+
+  return nextNodes;
+}
+
 function estimateImportedNodeWidth(node: MindMapNode): number {
   const titleWidth = Math.max(110, node.title.length * 8 + 52);
   return Math.min(320, titleWidth);
@@ -769,8 +969,9 @@ function layoutSubtree(
     return 0;
   }
 
-  if (node.vendor?.xmind?.rawTopic) {
-    const importedPosition = readTopicPosition(node.vendor.xmind.rawTopic as XMindTopic);
+  const rawTopic = node.vendor?.xmind?.rawTopic;
+  if (isRecord(rawTopic)) {
+    const importedPosition = readTopicPosition(rawTopic);
     if (importedPosition) {
       node.x = importedPosition.x;
       node.y = importedPosition.y;
@@ -845,9 +1046,8 @@ function layoutImportedMap(map: MindMap): MindMap {
   );
 
   floatingNodes.forEach((node, index) => {
-    const importedPosition = node.vendor?.xmind?.rawTopic
-      ? readTopicPosition(node.vendor.xmind.rawTopic as XMindTopic)
-      : undefined;
+    const rawTopic = node.vendor?.xmind?.rawTopic;
+    const importedPosition = isRecord(rawTopic) ? readTopicPosition(rawTopic) : undefined;
     if (importedPosition) {
       node.x = importedPosition.x;
       node.y = importedPosition.y;
@@ -901,6 +1101,13 @@ async function buildImportedNodes(
   const fillColor = resolveTopicFillColor(topic, styleLookup);
   const displayColor = fillColor ?? resolveTopicLineColor(topic, styleLookup);
   const imageAttachment = await resolveImageAttachment(topic, id);
+  const hrefAttachment = readTopicHrefAttachment(topic, id);
+  const nodifyExtension = readNodifyTopicExtension(topic);
+  const attachments = mergeImportedAttachments([
+    ...(nodifyExtension.attachments ?? []),
+    imageAttachment,
+    hrefAttachment,
+  ]);
 
   const node: MindMapNode = {
     id,
@@ -908,7 +1115,8 @@ async function buildImportedNodes(
     title: safeTitle(topic.title, parentId ? "Imported topic" : "Imported map"),
     note: topic.notes?.plain?.content?.trim() || undefined,
     tags: topic.labels?.filter(Boolean)?.length ? topic.labels.filter(Boolean) : undefined,
-    attachments: imageAttachment ? [imageAttachment] : undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    dueAt: nodifyExtension.dueAt,
     x: 0,
     y: 0,
     children: [],
@@ -938,7 +1146,7 @@ async function buildImportedNodes(
     [id]: node,
   };
 
-  for (const child of asTopics(topic.children?.attached as XMindChildrenBucket)) {
+  for (const child of asTopics(topic.children?.attached)) {
     const parsedChild = await buildImportedNodes(
       child,
       id,
@@ -952,7 +1160,7 @@ async function buildImportedNodes(
     Object.assign(nodes, parsedChild.nodes);
   }
 
-  for (const floatingChild of asTopics(topic.children?.detached as XMindChildrenBucket)) {
+  for (const floatingChild of asTopics(topic.children?.detached)) {
     const parsedFloating = await buildImportedNodes(
       floatingChild,
       null,
@@ -1039,6 +1247,7 @@ export async function importFromXmind(
   const rawContent = await contentFile.async("string");
   const manifestRaw = await zip.file("manifest.json")?.async("string");
   const metadataRaw = await zip.file("metadata.json")?.async("string");
+  const nodifyMetadataRaw = await zip.file("nodify-metadata.json")?.async("string");
   const parsed = JSON.parse(rawContent) as unknown;
 
   let sheet: XMindSheet | undefined;
@@ -1080,12 +1289,17 @@ export async function importFromXmind(
     parsedRoot.nodes,
     sourceTopicToNodeId
   );
+  const nodes = applyNodifyXmindMetadata(
+    parsedRoot.nodes,
+    sourceTopicToNodeId,
+    parseNodifyXmindMetadata(nodifyMetadataRaw)
+  );
 
   return preserveImportedPositions(layoutImportedMap({
     id: "imported",
     title: safeTitle(activeSheet.title ?? rootTopic.title, fallbackTitle),
     rootId: parsedRoot.rootId,
-    nodes: parsedRoot.nodes,
+    nodes,
     edges: importedRelationships.edges,
     importedFormat: {
       sourceFormat: "xmind",

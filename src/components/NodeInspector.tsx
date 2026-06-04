@@ -2,7 +2,7 @@
  * Súbor: src/components/NodeInspector.tsx
  * Abstrakt: Poskytuje bočný panel na úpravu vlastností uzla, poznámok, tagov a príloh.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -20,7 +20,7 @@ import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 
 import { EdgeStyle, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../types/map";
 import { isImageAttachment } from "../screens/mapScreen/routing";
@@ -107,6 +107,7 @@ const PALETTE = [
   "#e5e7eb",
 ];
 
+
 export default function NodeInspector({
   node,
   nodes,
@@ -142,6 +143,7 @@ export default function NodeInspector({
   const [dateDraft, setDateDraft] = useState("");
   const [timeDraft, setTimeDraft] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<NodeAttachment | null>(null);
+  const headerActionRef = useRef<{ action: "save" | "close"; at: number } | null>(null);
 
   const formatDateDraft = (date: Date) => {
     const day = `${date.getDate()}`.padStart(2, "0");
@@ -305,10 +307,12 @@ export default function NodeInspector({
       return;
     }
 
-    submit();
-    onUpdateDueAt(node.id, parsed.dueAt);
-    Keyboard.dismiss();
     onClose();
+    setTimeout(() => {
+      submit();
+      onUpdateDueAt(node.id, parsed.dueAt);
+      Keyboard.dismiss();
+    }, 0);
   };
 
   const clearDueAt = () => {
@@ -440,6 +444,24 @@ export default function NodeInspector({
 
   const close = () => {
     onClose();
+    setTimeout(() => {
+      Keyboard.dismiss();
+    }, 0);
+  };
+
+  const triggerHeaderAction = (action: "save" | "close") => {
+    const now = Date.now();
+    const last = headerActionRef.current;
+    if (last?.action === action && now - last.at < 450) {
+      return;
+    }
+
+    headerActionRef.current = { action, at: now };
+    if (action === "save") {
+      applyChanges();
+    } else {
+      close();
+    }
   };
 
   if (!node) {
@@ -458,11 +480,19 @@ export default function NodeInspector({
           minute: "2-digit",
         }).format(dueDate)
       : "—";
+  const panelStyle = isSide
+    ? [s.side, isDark && s.sideDark, { width: panelWidth }]
+    : [s.sheet, isDark && s.sheetDark];
+  const headerStyle = [s.header, isSide && s.headerSide, isSide && isDark && s.headerSideDark];
+  const contentStyle = [s.content, isSide && s.contentSide];
+  const labelStyle = [s.label, isSide && s.labelSide, isDark && s.labelDark];
+  const inputStyle = [s.input, isSide && s.inputSide, isDark && s.inputDark];
+  const textareaStyle = [s.input, isSide && s.inputSide, isDark && s.inputDark, s.textarea, isSide && s.textareaSide];
 
   return (
     <>
       <View
-        style={isSide ? [s.side, isDark && s.sideDark, { width: panelWidth }] : [s.sheet, isDark && s.sheetDark]}
+        style={panelStyle}
         onLayout={(event) => {
           if (isSide) {
             onHeight(0);
@@ -473,13 +503,29 @@ export default function NodeInspector({
           onHeight(nextHeight);
         }}
       >
-      <View style={s.header}>
-        <View />
+      <View style={headerStyle}>
+        {isSide ? (
+          <Text numberOfLines={1} style={[s.headerTitle, isDark && s.headerTitleDark]}>
+            {t("inspector.node")}
+          </Text>
+        ) : (
+          <View />
+        )}
         <View style={s.headerActions}>
-          <Pressable onPress={applyChanges} style={({ pressed }) => [s.saveButton, pressed && s.pressed]}>
+          <Pressable
+            onTouchStart={() => triggerHeaderAction("save")}
+            onPressIn={() => triggerHeaderAction("save")}
+            onPress={() => triggerHeaderAction("save")}
+            style={({ pressed }) => [s.saveButton, pressed && s.pressed]}
+          >
             <Text style={s.saveButtonText}>{t("common.save")}</Text>
           </Pressable>
-          <Pressable onPress={close} style={({ pressed }) => [s.closeButton, isDark && s.closeButtonDark, pressed && s.pressed]}>
+          <Pressable
+            onTouchStart={() => triggerHeaderAction("close")}
+            onPressIn={() => triggerHeaderAction("close")}
+            onPress={() => triggerHeaderAction("close")}
+            style={({ pressed }) => [s.closeButton, isDark && s.closeButtonDark, pressed && s.pressed]}
+          >
             <Text style={[s.closeButtonText, isDark && s.closeButtonTextDark]}>{t("common.close")}</Text>
           </Pressable>
         </View>
@@ -487,27 +533,31 @@ export default function NodeInspector({
 
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={s.content}
+        contentContainerStyle={contentStyle}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="always"
       >
-        <Text style={[s.title, isDark && s.titleDark]}>{t("inspector.node")}</Text>
+        {!isSide ? <Text style={[s.title, isDark && s.titleDark]}>{t("inspector.node")}</Text> : null}
 
         <View style={s.row}>
-          <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.name")}</Text>
+          <Text style={labelStyle}>{t("inspector.name")}</Text>
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            onSubmitEditing={submit}
-            style={[s.input, isDark && s.inputDark]}
+            onSubmitEditing={() => {
+              submit();
+              Keyboard.dismiss();
+            }}
+            style={inputStyle}
             placeholder={t("inspector.nodeTitle")}
             placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+            blurOnSubmit
             returnKeyType="done"
           />
         </View>
 
         <View style={s.row}>
-          <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.note")}</Text>
+          <Text style={labelStyle}>{t("inspector.note")}</Text>
           <TextInput
             value={noteDraft}
             onChangeText={setNoteDraft}
@@ -515,7 +565,7 @@ export default function NodeInspector({
               submit();
               Keyboard.dismiss();
             }}
-            style={[s.input, isDark && s.inputDark, s.textarea]}
+            style={textareaStyle}
             placeholder={t("inspector.notePlaceholder")}
             placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
             multiline
@@ -526,14 +576,18 @@ export default function NodeInspector({
         </View>
 
         <View style={s.row}>
-          <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.tags")}</Text>
+          <Text style={labelStyle}>{t("inspector.tags")}</Text>
           <TextInput
             value={tagsDraft}
             onChangeText={setTagsDraft}
-            onSubmitEditing={submit}
-            style={[s.input, isDark && s.inputDark]}
+            onSubmitEditing={() => {
+              submit();
+              Keyboard.dismiss();
+            }}
+            style={inputStyle}
             placeholder={t("inspector.tagsPlaceholder")}
             placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+            blurOnSubmit
             returnKeyType="done"
           />
           <Text style={[s.helper, isDark && s.helperDark]}>{t("inspector.tagsHint")}</Text>
@@ -542,7 +596,7 @@ export default function NodeInspector({
         <View style={s.section}>
           <Text style={[s.sectionTitle, isDark && s.sectionTitleDark]}>{t("inspector.schedule")}</Text>
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.currentDate")}</Text>
+            <Text style={labelStyle}>{t("inspector.currentDate")}</Text>
             <Text style={[s.value, isDark && s.valueDark]}>{dueLabel}</Text>
           </View>
           <View style={s.pills}>
@@ -555,26 +609,30 @@ export default function NodeInspector({
           </View>
           <View style={s.inlineInputs}>
             <View style={s.inlineInputCell}>
-              <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.date")}</Text>
+              <Text style={labelStyle}>{t("inspector.date")}</Text>
               <TextInput
                 value={dateDraft}
                 onChangeText={setDateDraft}
-                style={[s.input, isDark && s.inputDark]}
+                onSubmitEditing={applyDueAt}
+                style={inputStyle}
                 placeholder="27.04.2026"
                 placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
                 keyboardType="numbers-and-punctuation"
+                blurOnSubmit
                 returnKeyType="done"
               />
             </View>
             <View style={s.inlineInputCell}>
-              <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.time")}</Text>
+              <Text style={labelStyle}>{t("inspector.time")}</Text>
               <TextInput
                 value={timeDraft}
                 onChangeText={setTimeDraft}
-                style={[s.input, isDark && s.inputDark]}
+                onSubmitEditing={applyDueAt}
+                style={inputStyle}
                 placeholder="09:00"
                 placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
                 keyboardType="numbers-and-punctuation"
+                blurOnSubmit
                 returnKeyType="done"
               />
             </View>
@@ -621,7 +679,7 @@ export default function NodeInspector({
         </View>
 
         <View style={s.row}>
-          <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.color")}</Text>
+          <Text style={labelStyle}>{t("inspector.color")}</Text>
           <View style={s.paletteWrap}>
             {PALETTE.map((color) => {
               const active = (node.color ?? "") === color;
@@ -651,7 +709,7 @@ export default function NodeInspector({
           <Text style={[s.sectionTitle, isDark && s.sectionTitleDark]}>{t("inspector.content")}</Text>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.subtree")}</Text>
+            <Text style={labelStyle}>{t("inspector.subtree")}</Text>
             <View style={s.pills}>
               <Pressable
                 onPress={() => onUpdateCollapsed(node.id, false)}
@@ -679,7 +737,7 @@ export default function NodeInspector({
           </View>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.storedTags")}</Text>
+            <Text style={labelStyle}>{t("inspector.storedTags")}</Text>
             <View style={s.stackInline}>
               {(node.tags ?? []).length === 0 ? (
                 <Text style={[s.value, isDark && s.valueDark]}>—</Text>
@@ -698,7 +756,7 @@ export default function NodeInspector({
           <Text style={[s.sectionTitle, isDark && s.sectionTitleDark]}>{t("inspector.hierarchy")}</Text>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.parent")}</Text>
+            <Text style={labelStyle}>{t("inspector.parent")}</Text>
             {parent ? (
               <Pressable onPress={() => onSelectNode(parent.id)} style={({ pressed }) => [s.linkButton, pressed && s.pressed]}>
                 <Text style={s.linkButtonText}>{parent.title}</Text>
@@ -709,7 +767,7 @@ export default function NodeInspector({
           </View>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.children")}</Text>
+            <Text style={labelStyle}>{t("inspector.children")}</Text>
             <View style={s.stack}>
               {children.length === 0 ? (
                 <Text style={[s.value, isDark && s.valueDark]}>—</Text>
@@ -788,7 +846,7 @@ export default function NodeInspector({
           <Text style={[s.sectionTitle, isDark && s.sectionTitleDark]}>{t("inspector.appearance")}</Text>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.size")}</Text>
+            <Text style={labelStyle}>{t("inspector.size")}</Text>
             <View style={s.stepper}>
               <Pressable
                 onPress={() =>
@@ -811,7 +869,7 @@ export default function NodeInspector({
           </View>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.shape")}</Text>
+            <Text style={labelStyle}>{t("inspector.shape")}</Text>
             <View style={s.pills}>
               {([
                 { key: "circle", label: t("inspector.circle") },
@@ -833,7 +891,7 @@ export default function NodeInspector({
           </View>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("inspector.line")}</Text>
+            <Text style={labelStyle}>{t("inspector.line")}</Text>
             <View style={s.pills}>
               {([
                 { key: "solid", label: t("map.solid") },
@@ -854,7 +912,7 @@ export default function NodeInspector({
           </View>
 
           <View style={s.infoRow}>
-            <Text style={[s.label, isDark && s.labelDark]}>{t("map.width")}</Text>
+            <Text style={labelStyle}>{t("map.width")}</Text>
             <View style={s.stepper}>
               <Pressable
                 onPress={() =>
@@ -948,18 +1006,19 @@ const s = StyleSheet.create({
     borderColor: "#334155",
   },
   side: {
-    borderRadius: 24,
+    borderRadius: 18,
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    marginLeft: 12,
-    marginRight: 12,
-    marginBottom: 12,
-    marginTop: 12,
+    marginLeft: 8,
+    marginRight: 8,
+    marginBottom: 8,
+    marginTop: 8,
     shadowColor: "#000000",
     shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 8,
+    overflow: "hidden",
   },
   sideDark: {
     backgroundColor: "#0f172a",
@@ -972,6 +1031,26 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
+  },
+  headerSide: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  headerSideDark: {
+    borderBottomColor: "#1e293b",
+  },
+  headerTitle: {
+    flex: 1,
+    marginRight: 10,
+    color: "#0f172a",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  headerTitleDark: {
+    color: "#f8fafc",
   },
   closeButton: {
     paddingHorizontal: 12,
@@ -1014,6 +1093,12 @@ const s = StyleSheet.create({
     paddingBottom: 24,
     gap: 18,
   },
+  contentSide: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 14,
+    gap: 12,
+  },
   title: {
     fontSize: 20,
     fontWeight: "800",
@@ -1033,6 +1118,9 @@ const s = StyleSheet.create({
     fontWeight: "700",
     color: "#475569",
   },
+  labelSide: {
+    fontSize: 12,
+  },
   labelDark: {
     color: "#cbd5e1",
   },
@@ -1045,6 +1133,12 @@ const s = StyleSheet.create({
     backgroundColor: "#ffffff",
     color: "#111827",
   },
+  inputSide: {
+    height: 40,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    fontSize: 13,
+  },
   inputDark: {
     borderColor: "#334155",
     backgroundColor: "#111827",
@@ -1054,6 +1148,11 @@ const s = StyleSheet.create({
     height: 100,
     paddingTop: 12,
     paddingBottom: 12,
+  },
+  textareaSide: {
+    height: 72,
+    paddingTop: 10,
+    paddingBottom: 10,
   },
   helper: {
     fontSize: 12,

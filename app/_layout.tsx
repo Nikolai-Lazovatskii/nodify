@@ -12,7 +12,7 @@ import { StatusBar } from "expo-status-bar";
 
 import { AuthProvider } from "@/src/auth/AuthProvider";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { LanguagePreferenceProvider, useTranslation } from "@/src/i18n/LanguagePreference";
+import { LanguagePreferenceProvider, useTranslation } from "@/src/lang/LanguagePreference";
 import { ThemePreferenceProvider } from "@/src/theme/ThemePreference";
 
 export const unstable_settings = {
@@ -37,10 +37,10 @@ function RootLayoutInner() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="modal" options={{ presentation: "modal", title: t("tabs.modal") }} />
+          <Stack screenOptions={{ headerShown: false, orientation: "all" }}>
+            <Stack.Screen name="(tabs)" options={{ orientation: "all" }} />
+            <Stack.Screen name="(auth)" options={{ orientation: "all" }} />
+            <Stack.Screen name="modal" options={{ presentation: "modal", title: t("tabs.modal"), orientation: "all" }} />
           </Stack>
           <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
         </ThemeProvider>

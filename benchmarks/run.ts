@@ -604,9 +604,8 @@ function createRouteChooser(condition: Condition, routeObstacles: RouteRect[], r
       return { committedPoints: directPoints };
     }
 
-    const directHitsNode = routeObstacles.some(
-      (rect) => !excludedIds.has(rect.id) && routeIntersectsRect(directPoints, rect)
-    );
+    const nodeObstacles = routeObstacles.filter((rect) => !excludedIds.has(rect.id));
+    const directHitsNode = nodeObstacles.some((rect) => routeIntersectsRect(directPoints, rect));
     const directHitsEdge = committedRoutes.some((route) =>
       routeIntersectsRoute(directPoints, route.points)
     );
@@ -622,11 +621,28 @@ function createRouteChooser(condition: Condition, routeObstacles: RouteRect[], r
     const committedSegmentRects = committedRoutes.flatMap((route) =>
       routeSegmentRects(route.points, route.id)
     );
-    const localEdgeObstacles =
-      selectiveSmartRouting && committedSegmentRects.length > LOCAL_ROUTE_OBSTACLE_LIMIT
-        ? nearestRouteObstacles(fromNode, toNode, committedSegmentRects, new Set<string>(), LOCAL_ROUTE_OBSTACLE_LIMIT)
-        : committedSegmentRects;
-    const routeObstaclesForEdge = [...localNodeObstacles, ...localEdgeObstacles];
+    const routeObstaclesForEdge = [...localNodeObstacles, ...committedSegmentRects];
+    const scoreRoute = (points: EdgePoint[]) => {
+      const nodeHits = nodeObstacles.reduce(
+        (count, rect) => count + (routeIntersectsRect(points, rect) ? 1 : 0),
+        0
+      );
+      const edgeHits = committedRoutes.reduce(
+        (count, route) => count + (routeIntersectsRoute(points, route.points) ? 1 : 0),
+        0
+      );
+      const bendPenalty = Math.max(0, points.length - 2) * 0.1;
+      const lengthPenalty = points.slice(0, -1).reduce((sum, point, index) => {
+        const next = points[index + 1];
+        return sum + Math.hypot(next.x - point.x, next.y - point.y);
+      }, 0) * 0.001;
+
+      return {
+        nodeHits,
+        edgeHits,
+        score: nodeHits * 5000 + edgeHits * 10000 + bendPenalty + lengthPenalty,
+      };
+    };
     const cacheKey = [
       id,
       fromNode.x,
@@ -640,8 +656,11 @@ function createRouteChooser(condition: Condition, routeObstacles: RouteRect[], r
     if (condition.routeCache) {
       const cached = routeState.cache.get(cacheKey);
       if (cached) {
-        routeState.cacheHits += 1;
-        return { drawPoints: cached, committedPoints: cached };
+        const cachedScore = scoreRoute(cached);
+        if (cachedScore.nodeHits === 0 && cachedScore.edgeHits === 0) {
+          routeState.cacheHits += 1;
+          return { drawPoints: cached, committedPoints: cached };
+        }
       }
     }
 
@@ -653,27 +672,49 @@ function createRouteChooser(condition: Condition, routeObstacles: RouteRect[], r
       : [baseSeed];
     let bestPoints: EdgePoint[] | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
+    let bestNodeHits = Number.POSITIVE_INFINITY;
+    let bestEdgeHits = Number.POSITIVE_INFINITY;
 
     for (const seed of seeds) {
       const points = routeEdgePoints(fromNode, toNode, routeObstaclesForEdge, seed);
-      const nodeHits = localNodeObstacles.reduce(
-        (count, rect) => count + (routeIntersectsRect(points, rect) ? 1 : 0),
-        0
-      );
-      const edgeHits = committedRoutes.reduce(
-        (count, route) => count + (routeIntersectsRoute(points, route.points) ? 1 : 0),
-        0
-      );
-      const bendPenalty = Math.max(0, points.length - 2) * 0.1;
-      const score = nodeHits * 10 + edgeHits * 4 + bendPenalty;
+      const { nodeHits, edgeHits, score } = scoreRoute(points);
 
       if (score < bestScore) {
         bestScore = score;
         bestPoints = points;
+        bestNodeHits = nodeHits;
+        bestEdgeHits = edgeHits;
       }
 
-      if (score === 0) {
+      if (nodeHits === 0 && edgeHits === 0) {
         break;
+      }
+    }
+
+    if (bestNodeHits > 0 || bestEdgeHits > 0) {
+      const fallbackSeeds = Array.from(new Set([
+        ...seeds,
+        baseSeed + 17,
+        baseSeed + 23,
+        baseSeed + 31,
+        baseSeed + 47,
+      ]));
+      const fullRouteObstacles = [...nodeObstacles, ...committedSegmentRects];
+
+      for (const seed of fallbackSeeds) {
+        const points = routeEdgePoints(fromNode, toNode, fullRouteObstacles, seed);
+        const { nodeHits, edgeHits, score } = scoreRoute(points);
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestPoints = points;
+          bestNodeHits = nodeHits;
+          bestEdgeHits = edgeHits;
+        }
+
+        if (nodeHits === 0 && edgeHits === 0) {
+          break;
+        }
       }
     }
 

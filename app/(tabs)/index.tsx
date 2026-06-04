@@ -10,7 +10,7 @@ import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/src/auth/AuthProvider";
-import { useLanguagePreference, useTranslation } from "@/src/i18n/LanguagePreference";
+import { useLanguagePreference, useTranslation } from "@/src/lang/LanguagePreference";
 import { useThemePreference } from "@/src/theme/ThemePreference";
 
 export default function Index() {

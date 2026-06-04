@@ -6,7 +6,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { Link, router, Href } from "expo-router";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
 
 function getErrorMessage(error: unknown, fallback: string): string {

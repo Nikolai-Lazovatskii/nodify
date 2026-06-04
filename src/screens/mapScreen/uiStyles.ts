@@ -13,6 +13,11 @@ export const ui = StyleSheet.create({
     gap: 10,
     alignItems: "flex-start",
   },
+  topOverlayLandscape: {
+    top: 8,
+    left: 8,
+    right: 8,
+  },
   topRow: {
     width: "100%",
     flexDirection: "row",
@@ -20,7 +25,10 @@ export const ui = StyleSheet.create({
     gap: 10,
   },
   topRowLandscape: {
-    maxWidth: 620,
+    maxWidth: 340,
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    gap: 8,
   },
   topActions: {
     flexDirection: "row",
@@ -29,6 +37,9 @@ export const ui = StyleSheet.create({
   },
   topActionsLandscape: {
     alignSelf: "auto",
+    flexWrap: "wrap",
+    gap: 8,
+    maxWidth: 300,
   },
   actionButton: {
     minWidth: 44,
@@ -42,11 +53,18 @@ export const ui = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
   },
+  actionButtonLandscape: {
+    minWidth: 40,
+    height: 40,
+    borderRadius: 12,
+    paddingHorizontal: 11,
+  },
   searchPanel: {
     flex: 1,
   },
   searchPanelLandscape: {
-    maxWidth: 320,
+    flexBasis: "100%",
+    maxWidth: 250,
   },
   searchInput: {
     height: 44,
@@ -143,10 +161,17 @@ export const ui = StyleSheet.create({
     fontWeight: "800",
     marginTop: -2,
   },
+  primaryButtonTextLandscape: {
+    fontSize: 24,
+    lineHeight: 24,
+  },
   secondaryButtonText: {
     color: "#0f172a",
     fontSize: 14,
     fontWeight: "800",
+  },
+  secondaryButtonTextLandscape: {
+    fontSize: 12,
   },
   secondaryButtonTextDark: {
     color: "#f8fafc",
@@ -166,8 +191,10 @@ export const ui = StyleSheet.create({
     gap: 12,
   },
   bannerLandscape: {
-    left: 12,
-    right: 12,
+    left: 8,
+    right: "auto",
+    top: 8,
+    maxWidth: 420,
   },
   bannerText: {
     flex: 1,

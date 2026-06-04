@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Defs, G, Pattern, Rect, Text as SvgText } from "react-native-svg";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 
 import EdgeView, { EdgePoint } from "../../components/EdgeView";
 import EditableNodeView from "../../components/EditableNodeView";
@@ -56,9 +56,11 @@ import {
   routeEdgePoints,
   routeIntersectsRect,
   routeIntersectsRoute,
+  type RouteRect,
   RoutedEdge,
   routeSegmentRects,
 } from "./routing";
+import { buildRelationshipDisplayColors, type RouteColorRef } from "./routeColors";
 import { ui } from "./uiStyles";
 import { styles } from "../MapScreen.styles";
 
@@ -78,6 +80,22 @@ type CommittedRoute = {
   id: string;
   points: EdgePoint[];
 };
+
+type RelationshipRouteCache = {
+  routes: Map<string, RoutedEdge>;
+  signatures: Map<string, string>;
+  dirty: Set<string>;
+};
+
+function snapshotRoutes(routes: Map<string, RoutedEdge>) {
+  const snapshot: Record<string, RoutedEdge> = {};
+
+  for (const [id, route] of routes) {
+    snapshot[id] = route;
+  }
+
+  return snapshot;
+}
 
 function viewportContainsNode(viewport: WorldViewport, node: MindMapNode, isRoot: boolean) {
   const { halfW, halfH } = estimateNodeHalfBounds(node, isRoot);
@@ -209,22 +227,23 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   const [canvasKey, setCanvasKey] = useState(0);
   const lastOrientation = useRef(isLandscape);
   const didMount = useRef(false);
-  const linkFromIdRef = useRef<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [linkFromId, setLinkFromId] = useState<string | null>(null);
-  const [changeParentNodeId, setChangeParentNodeId] = useState<string | null>(null);
-  const [repositionNodeId, setRepositionNodeId] = useState<string | null>(null);
-  const [inspectorH, setInspectorH] = useState(0);
-  const [canvasScale, setCanvasScale] = useState(1);
-  const [zoomHudVisible, setZoomHudVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [moveToast, setMoveToast] = useState<string | null>(null);
-  const [moveInProgress, setMoveInProgress] = useState(false);
-  const [largeMapContentMounted, setLargeMapContentMounted] = useState(false);
-  const [largeMapVisible, setLargeMapVisible] = useState(false);
-  const [smartRoutingReady, setSmartRoutingReady] = useState(false);
-  const [canvasTransform, setCanvasTransform] = useState<CanvasTransform>({
+  const lref = useRef<string | null>(null);
+  const [sid, setSid] = useState<string | null>(null);
+  const [seid, setSeid] = useState<string | null>(null);
+  const [lnk, setLnk] = useState<string | null>(null);
+  const [cpId, setCpId] = useState<string | null>(null);
+  const [rpId, setRpId] = useState<string | null>(null);
+  const [ih, setIh] = useState(0);
+  const [z, setZ] = useState(1);
+  const [zh, setZh] = useState(false);
+  const [q, setQ] = useState("");
+  const [mt, setMt] = useState<string | null>(null);
+  const [mb, setMb] = useState(false);
+  const [bigM, setBigM] = useState(false);
+  const [bigV, setBigV] = useState(false);
+  const [sr, setSr] = useState(false);
+  const [rre, setRre] = useState<Record<string, RoutedEdge>>({});
+  const [ct, setCt] = useState<CanvasTransform>({
     tx: 0,
     ty: 0,
     scale: 1,
@@ -236,12 +255,17 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   const mapRef = useRef(map);
   const canvasRef = useRef<ZoomableCanvasHandle | null>(null);
   const didAutoFitMapIdRef = useRef<string | null>(null);
-  const zoomHudTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const moveToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const routeCacheRef = useRef<Map<string, RoutedEdge>>(new Map());
+  const zhRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mtRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rcr = useRef<Map<string, RoutedEdge>>(new Map());
+  const rrcr = useRef<RelationshipRouteCache>({
+    routes: new Map(),
+    signatures: new Map(),
+    dirty: new Set(),
+  });
 
-  const linkMode = linkFromId !== null;
-  const changeParentMode = changeParentNodeId !== null;
+  const lm = lnk !== null;
+  const cpm = cpId !== null;
   const totalNodeCount = Object.keys(map.nodes).length;
   const useCappedSurface = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
   const worldReach = useMemo(() => {
@@ -322,15 +346,15 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   }, [isLandscape]);
 
   useEffect(() => {
-    linkFromIdRef.current = linkFromId;
-  }, [linkFromId]);
+    lref.current = lnk;
+  }, [lnk]);
 
   useEffect(() => {
     mapRef.current = map;
   }, [map]);
 
   useEffect(() => {
-    routeCacheRef.current.clear();
+    rcr.current.clear();
   }, [map.nodes, map.edges]);
 
   useEffect(() => {
@@ -354,53 +378,114 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
   useEffect(() => {
     return () => {
-      if (zoomHudTimeoutRef.current) {
-        clearTimeout(zoomHudTimeoutRef.current);
+      if (zhRef.current) {
+        clearTimeout(zhRef.current);
       }
-      if (moveToastTimeoutRef.current) {
-        clearTimeout(moveToastTimeoutRef.current);
+      if (mtRef.current) {
+        clearTimeout(mtRef.current);
       }
     };
   }, []);
 
   const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
   const mapBounds = useMemo(() => getMapBounds(nodes, map.rootId), [map.rootId, nodes]);
-  const visibleNodeIds = useMemo(() => collectVisibleNodeIds(map), [map]);
-  const visibleNodes = useMemo(
-    () => nodes.filter((node) => visibleNodeIds.has(node.id)),
-    [nodes, visibleNodeIds]
+  const viditelneIdcka = useMemo(() => collectVisibleNodeIds(map), [map]);
+  const viditelneUzly = useMemo(
+    () => nodes.filter((node) => viditelneIdcka.has(node.id)),
+    [nodes, viditelneIdcka]
   );
-  const largeMapMode = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
-  const viewportCullingEnabled = totalNodeCount > VIEWPORT_CULL_NODE_LIMIT;
-  const importedLayoutMode =
+  const podpisGeometrie = useMemo(() => {
+    return [...viditelneUzly]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((node) => {
+        const attachmentCount = node.attachments?.length ?? 0;
+        const tagCount = node.tags?.length ?? 0;
+        return [
+          node.id,
+          node.x,
+          node.y,
+          node.size ?? "",
+          node.title,
+          node.note ? 1 : 0,
+          node.dueAt ?? "",
+          attachmentCount,
+          tagCount,
+          node.collapsed ? 1 : 0,
+          node.children.join(","),
+        ].join(":");
+      })
+      .join("|");
+  }, [viditelneUzly]);
+  const velkaMapa = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
+  const orezVyrezu = totalNodeCount > VIEWPORT_CULL_NODE_LIMIT;
+  const importRozlozenie =
     map.importedFormat?.sourceFormat === "mm" || map.importedFormat?.sourceFormat === "xmind";
-  const selectiveSmartRouting = largeMapMode || importedLayoutMode;
-  const shouldRenderMapContent = !largeMapMode || largeMapContentMounted;
-  const isLargeMapLoading = largeMapMode && !largeMapVisible;
-  const worldViewport = useMemo(
+  const mudreCesty = velkaMapa || importRozlozenie;
+  const podpisyVztahov = useMemo(() => {
+    return map.edges.map((edge, edgeIndex) => ({
+      id: edge.id,
+      signature: [
+        edgeIndex,
+        edge.id,
+        edge.fromId,
+        edge.toId,
+        edge.style ?? "",
+        edge.width ?? "",
+        mudreCesty ? 1 : 0,
+        podpisGeometrie,
+      ].join("|"),
+    }));
+  }, [map.edges, podpisGeometrie, mudreCesty]);
+  const prekazkyCiest = useMemo(
+    () => viditelneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 26)),
+    [map.rootId, viditelneUzly]
+  );
+  const stromoveCesty = useMemo<RouteColorRef[]>(() => {
+    const routes: RouteColorRef[] = [];
+
+    for (const parentNode of viditelneUzly) {
+      for (const childId of parentNode.children) {
+        const childNode = map.nodes[childId];
+        if (!childNode || !viditelneIdcka.has(childId)) {
+          continue;
+        }
+
+        routes.push({
+          id: `tree-${parentNode.id}-${childId}`,
+          points: getStructuredTreeEdgePoints(parentNode, childNode),
+          color: childNode.edgeToParent?.color ?? "#9ca3af",
+        });
+      }
+    }
+
+    return routes;
+  }, [map.nodes, viditelneIdcka, viditelneUzly]);
+  const kreslitObsah = !velkaMapa || bigM;
+  const nacitavaVelka = velkaMapa && !bigV;
+  const svetovyVyrez = useMemo(
     () => makeWorldViewport(
-      canvasTransform,
-      largeMapMode ? 4.5 : 0.35,
+      ct,
+      velkaMapa ? 4.5 : 0.35,
       WORLD_W,
       WORLD_H,
       SURFACE_W,
       SURFACE_H
     ),
-    [WORLD_H, WORLD_W, SURFACE_H, SURFACE_W, canvasTransform, largeMapMode]
+    [WORLD_H, WORLD_W, SURFACE_H, SURFACE_W, ct, velkaMapa]
   );
-  const renderedVisibleNodes = useMemo(() => {
-    if (!largeMapMode) {
-      return visibleNodes;
+  const kresleneUzly = useMemo(() => {
+    if (!velkaMapa) {
+      return viditelneUzly;
     }
-    if (!largeMapContentMounted) {
+    if (!bigM) {
       return [];
     }
-    if (!viewportCullingEnabled) {
-      return visibleNodes;
+    if (!orezVyrezu) {
+      return viditelneUzly;
     }
 
-    const nextNodes = visibleNodes.filter((node) =>
-      viewportContainsNode(worldViewport, node, node.id === map.rootId)
+    const nextNodes = viditelneUzly.filter((node) =>
+      viewportContainsNode(svetovyVyrez, node, node.id === map.rootId)
     );
     const included = new Set(nextNodes.map((node) => node.id));
 
@@ -410,71 +495,71 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       }
 
       const node = map.nodes[nodeId];
-      if (node && visibleNodeIds.has(nodeId)) {
+      if (node && viditelneIdcka.has(nodeId)) {
         nextNodes.push(node);
         included.add(nodeId);
       }
     };
 
     includeNode(map.rootId);
-    includeNode(selectedId);
-    if (changeParentNodeId) {
-      includeNode(changeParentNodeId);
+    includeNode(sid);
+    if (cpId) {
+      includeNode(cpId);
     }
-    if (linkFromId) {
-      includeNode(linkFromId);
+    if (lnk) {
+      includeNode(lnk);
     }
-    if (repositionNodeId) {
-      includeNode(repositionNodeId);
+    if (rpId) {
+      includeNode(rpId);
     }
 
     return nextNodes;
   }, [
-    changeParentNodeId,
-    largeMapMode,
-    largeMapContentMounted,
-    linkFromId,
+    cpId,
+    velkaMapa,
+    bigM,
+    lnk,
     map.nodes,
     map.rootId,
-    repositionNodeId,
-    selectedId,
-    viewportCullingEnabled,
-    visibleNodeIds,
-    visibleNodes,
-    worldViewport,
+    rpId,
+    sid,
+    orezVyrezu,
+    viditelneIdcka,
+    viditelneUzly,
+    svetovyVyrez,
   ]);
-  const renderedVisibleNodeIds = useMemo(
-    () => new Set(renderedVisibleNodes.map((node) => node.id)),
-    [renderedVisibleNodes]
+  const kresleneIdcka = useMemo(
+    () => new Set(kresleneUzly.map((node) => node.id)),
+    [kresleneUzly]
   );
   useEffect(() => {
-    setSmartRoutingReady(true);
-  }, [largeMapMode, map.id, worldViewport.left, worldViewport.right, worldViewport.top, worldViewport.bottom]);
+    setSr(true);
+  }, [velkaMapa, map.id, svetovyVyrez.left, svetovyVyrez.right, svetovyVyrez.top, svetovyVyrez.bottom]);
   useEffect(() => {
-    if (!largeMapMode) {
-      setLargeMapContentMounted(true);
-      setLargeMapVisible(true);
+    if (!velkaMapa) {
+      setBigM(true);
+      setBigV(true);
       return;
     }
 
-    setLargeMapContentMounted(false);
-    setLargeMapVisible(false);
+    setBigM(false);
+    setBigV(false);
     const timer = setTimeout(() => {
-      setLargeMapContentMounted(true);
+      setBigM(true);
     }, 120);
 
     return () => clearTimeout(timer);
-  }, [largeMapMode, map.id]);
+  }, [velkaMapa, map.id]);
   useEffect(() => {
-    if (!largeMapMode || !largeMapContentMounted) {
+    if (!velkaMapa || !bigM) {
       return;
     }
 
-    setLargeMapVisible(false);
+    setBigV(false);
     let revealTimer: ReturnType<typeof setTimeout> | null = null;
     const interaction = InteractionManager.runAfterInteractions(() => {
       revealTimer = setTimeout(() => {
-        setLargeMapVisible(true);
+        setBigV(true);
       }, 900);
     });
 
@@ -484,11 +569,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         clearTimeout(revealTimer);
       }
     };
-  }, [largeMapContentMounted, largeMapMode, map.id]);
-  const routeObstacles = useMemo(
-    () => renderedVisibleNodes.map((node) => makeNodeRouteRect(node, node.id === map.rootId)),
-    [map.rootId, renderedVisibleNodes]
-  );
+  }, [bigM, velkaMapa, map.id]);
   const chooseEdgeRoute = useCallback((
     id: string,
     fromNode: MindMapNode,
@@ -496,32 +577,49 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     excludedIds: Set<string>,
     committedRoutes: CommittedRoute[],
     baseSeed: number,
-    styleKey: string
+    styleKey: string,
+    availableRouteObstacles: RouteRect[]
   ): { drawPoints?: EdgePoint[]; committedPoints: EdgePoint[] } => {
     const directPoints = [fromNode, toNode];
-    const directHitsNode = routeObstacles.some((rect) =>
-      !excludedIds.has(rect.id) && routeIntersectsRect(directPoints, rect)
-    );
+    const nodeObstacles = availableRouteObstacles.filter((rect) => !excludedIds.has(rect.id));
+    const directHitsNode = nodeObstacles.some((rect) => routeIntersectsRect(directPoints, rect));
     const directHitsEdge = committedRoutes.some((route) =>
       routeIntersectsRoute(directPoints, route.points)
     );
-    const shouldRouteEdge = !selectiveSmartRouting || directHitsNode || directHitsEdge;
+    const shouldRouteEdge = !mudreCesty || directHitsNode || directHitsEdge;
 
     if (!shouldRouteEdge) {
-      return { committedPoints: directPoints };
+      return { drawPoints: directPoints, committedPoints: directPoints };
     }
 
-    const localNodeObstacles = selectiveSmartRouting
-      ? nearestRouteObstacles(fromNode, toNode, routeObstacles, excludedIds, LOCAL_ROUTE_OBSTACLE_LIMIT)
-      : routeObstacles.filter((rect) => !excludedIds.has(rect.id));
+    const localNodeObstacles = mudreCesty
+      ? nearestRouteObstacles(fromNode, toNode, availableRouteObstacles, excludedIds, LOCAL_ROUTE_OBSTACLE_LIMIT)
+      : availableRouteObstacles.filter((rect) => !excludedIds.has(rect.id));
     const committedSegmentRects = committedRoutes.flatMap((route) =>
       routeSegmentRects(route.points, route.id)
     );
-    const localEdgeObstacles =
-      selectiveSmartRouting && committedSegmentRects.length > LOCAL_ROUTE_OBSTACLE_LIMIT
-        ? nearestRouteObstacles(fromNode, toNode, committedSegmentRects, new Set<string>(), LOCAL_ROUTE_OBSTACLE_LIMIT)
-        : committedSegmentRects;
-    const routeObstaclesForEdge = [...localNodeObstacles, ...localEdgeObstacles];
+    const routeObstaclesForEdge = [...localNodeObstacles, ...committedSegmentRects];
+    const scoreRoute = (points: EdgePoint[]) => {
+      const nodeHits = nodeObstacles.reduce(
+        (count, rect) => count + (routeIntersectsRect(points, rect) ? 1 : 0),
+        0
+      );
+      const edgeHits = committedRoutes.reduce(
+        (count, route) => count + (routeIntersectsRoute(points, route.points) ? 1 : 0),
+        0
+      );
+      const bendPenalty = Math.max(0, points.length - 2) * 0.1;
+      const lengthPenalty = points.slice(0, -1).reduce((sum, point, index) => {
+        const next = points[index + 1];
+        return sum + Math.hypot(next.x - point.x, next.y - point.y);
+      }, 0) * 0.001;
+
+      return {
+        nodeHits,
+        edgeHits,
+        score: nodeHits * 100000 + edgeHits * 10000 + bendPenalty + lengthPenalty,
+      };
+    };
     const cacheKey = [
       id,
       fromNode.x,
@@ -531,63 +629,107 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       styleKey,
       routeObstaclesForEdge.map((rect) => rect.id).join(","),
     ].join(":");
-    const cached = routeCacheRef.current.get(cacheKey);
+    const cached = rcr.current.get(cacheKey);
     if (cached?.points) {
-      return { drawPoints: cached.points, committedPoints: cached.points };
+      const cachedScore = scoreRoute(cached.points);
+      if (cachedScore.nodeHits === 0 && cachedScore.edgeHits === 0) {
+        return { drawPoints: cached.points, committedPoints: cached.points };
+      }
     }
 
-    const seeds = selectiveSmartRouting
+    const seeds = mudreCesty
       ? [baseSeed, baseSeed + 3, baseSeed + 6, baseSeed + 11]
       : [baseSeed];
     let bestPoints: EdgePoint[] | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
+    let bestNodeHits = Number.POSITIVE_INFINITY;
+    let bestEdgeHits = Number.POSITIVE_INFINITY;
 
     for (const seed of seeds) {
       const points = routeEdgePoints(fromNode, toNode, routeObstaclesForEdge, seed);
-      const nodeHits = localNodeObstacles.reduce(
-        (count, rect) => count + (routeIntersectsRect(points, rect) ? 1 : 0),
-        0
-      );
-      const edgeHits = committedRoutes.reduce(
-        (count, route) => count + (routeIntersectsRoute(points, route.points) ? 1 : 0),
-        0
-      );
-      const bendPenalty = Math.max(0, points.length - 2) * 0.1;
-      const score = nodeHits * 10 + edgeHits * 4 + bendPenalty;
+      const { nodeHits, edgeHits, score } = scoreRoute(points);
 
       if (score < bestScore) {
         bestScore = score;
         bestPoints = points;
+        bestNodeHits = nodeHits;
+        bestEdgeHits = edgeHits;
       }
 
-      if (score === 0) {
+      if (nodeHits === 0 && edgeHits === 0) {
         break;
       }
     }
 
+    if (bestNodeHits > 0 || bestEdgeHits > 0) {
+      const fallbackSeeds = Array.from(new Set([
+        ...seeds,
+        baseSeed + 17,
+        baseSeed + 23,
+        baseSeed + 31,
+        baseSeed + 47,
+      ]));
+
+      for (const seed of fallbackSeeds) {
+        const points = routeEdgePoints(fromNode, toNode, nodeObstacles, seed);
+        const { nodeHits, edgeHits, score } = scoreRoute(points);
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestPoints = points;
+          bestNodeHits = nodeHits;
+          bestEdgeHits = edgeHits;
+        }
+
+        if (nodeHits === 0 && edgeHits === 0) {
+          break;
+        }
+      }
+
+      if (bestNodeHits > 0 || bestEdgeHits > 0) {
+        const fullRouteObstacles = [...nodeObstacles, ...committedSegmentRects];
+
+        for (const seed of fallbackSeeds) {
+          const points = routeEdgePoints(fromNode, toNode, fullRouteObstacles, seed);
+          const { nodeHits, edgeHits, score } = scoreRoute(points);
+
+          if (score < bestScore) {
+            bestScore = score;
+            bestPoints = points;
+            bestNodeHits = nodeHits;
+            bestEdgeHits = edgeHits;
+          }
+
+          if (nodeHits === 0 && edgeHits === 0) {
+            break;
+          }
+        }
+      }
+    }
+
     const points = bestPoints ?? directPoints;
-    routeCacheRef.current.set(cacheKey, { id, points });
-    if (routeCacheRef.current.size > 1200) {
-      routeCacheRef.current.clear();
+    rcr.current.set(cacheKey, { id, points });
+    if (rcr.current.size > 1200) {
+      rcr.current.clear();
     }
 
     return { drawPoints: points, committedPoints: points };
-  }, [routeObstacles, selectiveSmartRouting]);
+  }, [mudreCesty]);
 
   const routedTreeEdges = useMemo(() => {
-    if (!smartRoutingReady) {
+    if (!sr) {
       return {};
     }
 
     const routes: Record<string, RoutedEdge> = {};
     let routeIndex = 0;
 
-    for (const parentNode of renderedVisibleNodes) {
+    for (const parentNode of kresleneUzly) {
       if (routeIndex >= MAX_RENDERED_EDGES_PER_FRAME) {
         break;
       }
 
-      if (!renderedVisibleNodeIds.has(parentNode.id)) {
+      if (!kresleneIdcka.has(parentNode.id)) {
         continue;
       }
 
@@ -598,7 +740,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
         const childId = parentNode.children[childIndex];
         const childNode = map.nodes[childId];
-        if (!childNode || !renderedVisibleNodeIds.has(childId)) {
+        if (!childNode || !kresleneIdcka.has(childId)) {
           continue;
         }
 
@@ -612,90 +754,119 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     }
 
     return routes;
-  }, [map.nodes, renderedVisibleNodeIds, renderedVisibleNodes, smartRoutingReady]);
-  const routedRelationshipEdges = useMemo(() => {
-    if (!smartRoutingReady) {
-      return {};
+  }, [map.nodes, kresleneIdcka, kresleneUzly, sr]);
+  useEffect(() => {
+    const cache = rrcr.current;
+    const liveIds = new Set(podpisyVztahov.map((item) => item.id));
+    let changed = false;
+
+    for (const id of Array.from(cache.routes.keys())) {
+      if (!liveIds.has(id)) {
+        cache.routes.delete(id);
+        cache.signatures.delete(id);
+        cache.dirty.delete(id);
+        changed = true;
+      }
     }
 
-    const routes: Record<string, RoutedEdge> = {};
-    const committedRoutes: CommittedRoute[] = [];
-    for (const parentNode of renderedVisibleNodes) {
-      if (committedRoutes.length >= MAX_RENDERED_EDGES_PER_FRAME) {
-        break;
+    for (const item of podpisyVztahov) {
+      if (cache.signatures.get(item.id) !== item.signature) {
+        cache.signatures.set(item.id, item.signature);
+        cache.dirty.add(item.id);
+      }
+    }
+
+    if (!sr || cache.dirty.size === 0) {
+      if (changed) {
+        setRre(snapshotRoutes(cache.routes));
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) {
+        return;
       }
 
-      for (const childId of parentNode.children) {
-        if (committedRoutes.length >= MAX_RENDERED_EDGES_PER_FRAME) {
-          break;
+      const currentCache = rrcr.current;
+      const dirtyIds = new Set(currentCache.dirty);
+      if (dirtyIds.size === 0) {
+        return;
+      }
+
+      const nextRoutes = new Map(currentCache.routes);
+      const committedRoutes: CommittedRoute[] = stromoveCesty.map((route) => ({
+        id: route.id,
+        points: route.points,
+      }));
+
+      map.edges.forEach((edge, edgeIndex) => {
+        const fromNode = map.nodes[edge.fromId];
+        const toNode = map.nodes[edge.toId];
+        const existingRoute = nextRoutes.get(edge.id);
+
+        if (!fromNode || !toNode || !viditelneIdcka.has(edge.fromId) || !viditelneIdcka.has(edge.toId)) {
+          nextRoutes.delete(edge.id);
+          currentCache.dirty.delete(edge.id);
+          return;
         }
 
-        const childNode = map.nodes[childId];
-        if (!childNode || !renderedVisibleNodeIds.has(childId)) {
-          continue;
+        if (!dirtyIds.has(edge.id)) {
+          if (existingRoute?.points) {
+            committedRoutes.push({ id: edge.id, points: existingRoute.points });
+          }
+          return;
         }
 
-        const id = `tree-${parentNode.id}-${childId}`;
-        committedRoutes.push({
-          id,
-          points: routedTreeEdges[id]?.points ?? [parentNode, childNode],
+        const route = chooseEdgeRoute(
+          edge.id,
+          fromNode,
+          toNode,
+          new Set([edge.fromId, edge.toId]),
+          committedRoutes,
+          edgeIndex + 97,
+          `${edge.style ?? "dashed"}:${edge.width ?? 2}`,
+          prekazkyCiest
+        );
+        const points = route.drawPoints ?? route.committedPoints;
+        nextRoutes.set(edge.id, {
+          id: edge.id,
+          points,
         });
-      }
-    }
+        committedRoutes.push({ id: edge.id, points: route.committedPoints });
+        currentCache.dirty.delete(edge.id);
+      });
 
-    const remainingSlots = Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - committedRoutes.length);
-    if (remainingSlots === 0) {
-      return routes;
-    }
-
-    let relationshipRouteCount = 0;
-    map.edges.forEach((edge, edgeIndex) => {
-      if (relationshipRouteCount >= remainingSlots) {
-        return;
-      }
-
-      const fromNode = map.nodes[edge.fromId];
-      const toNode = map.nodes[edge.toId];
-      if (
-        !fromNode ||
-        !toNode ||
-        !renderedVisibleNodeIds.has(edge.fromId) ||
-        !renderedVisibleNodeIds.has(edge.toId)
-      ) {
-        return;
-      }
-
-      const excludedIds = new Set([edge.fromId, edge.toId]);
-      const route = chooseEdgeRoute(
-        edge.id,
-        fromNode,
-        toNode,
-        excludedIds,
-        committedRoutes,
-        edgeIndex + 97,
-        `${edge.style ?? "dashed"}:${edge.width ?? 2}`
-      );
-      routes[edge.id] = {
-        id: edge.id,
-        points: route.drawPoints,
-      };
-      committedRoutes.push({ id: edge.id, points: route.committedPoints });
-      relationshipRouteCount += 1;
+      currentCache.routes = nextRoutes;
+      setRre(snapshotRoutes(currentCache.routes));
     });
 
-    return routes;
-  }, [chooseEdgeRoute, map.edges, map.nodes, renderedVisibleNodeIds, renderedVisibleNodes, routedTreeEdges, smartRoutingReady]);
-  const renderedTreeEdgeRefs = useMemo(() => {
+    return () => {
+      cancelled = true;
+      interaction.cancel?.();
+    };
+  }, [
+    chooseEdgeRoute,
+    map.edges,
+    map.nodes,
+    podpisyVztahov,
+    prekazkyCiest,
+    stromoveCesty,
+    sr,
+    viditelneIdcka,
+  ]);
+  const stromHrany = useMemo(() => {
     const refs: { id: string; parentNode: MindMapNode; childNode: MindMapNode }[] = [];
 
-    for (const parentNode of renderedVisibleNodes) {
+    for (const parentNode of kresleneUzly) {
       for (const childId of parentNode.children) {
         if (refs.length >= MAX_RENDERED_EDGES_PER_FRAME) {
           return refs;
         }
 
         const childNode = map.nodes[childId];
-        if (!childNode || !renderedVisibleNodeIds.has(childId)) {
+        if (!childNode || !kresleneIdcka.has(childId)) {
           continue;
         }
 
@@ -708,9 +879,9 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     }
 
     return refs;
-  }, [map.nodes, renderedVisibleNodeIds, renderedVisibleNodes]);
-  const renderedRelationshipEdges = useMemo(() => {
-    const remainingSlots = Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - renderedTreeEdgeRefs.length);
+  }, [map.nodes, kresleneIdcka, kresleneUzly]);
+  const vztahHrany = useMemo(() => {
+    const remainingSlots = Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - stromHrany.length);
     if (remainingSlots === 0) {
       return [];
     }
@@ -721,20 +892,44 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         break;
       }
 
-      if (renderedVisibleNodeIds.has(edge.fromId) && renderedVisibleNodeIds.has(edge.toId)) {
+      if (kresleneIdcka.has(edge.fromId) && kresleneIdcka.has(edge.toId)) {
         refs.push(edge);
       }
     }
 
     return refs;
-  }, [map.edges, renderedTreeEdgeRefs.length, renderedVisibleNodeIds]);
-  const mapRenderProgress = largeMapMode
-    ? largeMapVisible ? 100 : largeMapContentMounted ? 90 : 55
+  }, [map.edges, stromHrany.length, kresleneIdcka]);
+  const farbyVztahov = useMemo(() => {
+    const treeRoutes: RouteColorRef[] = stromHrany
+      .map(({ id, parentNode, childNode }) => ({
+        id,
+        points: routedTreeEdges[id]?.points ?? [parentNode, childNode],
+        color: childNode.edgeToParent?.color ?? "#9ca3af",
+      }))
+      .filter((route) => route.points.length >= 2);
+    const relationshipRoutes: RouteColorRef[] = vztahHrany
+      .map((edge) => {
+        const points = rre[edge.id]?.points;
+        if (!points || points.length < 2) {
+          return null;
+        }
+
+        return {
+          id: edge.id,
+          points,
+          color: edge.color ?? "#94a3b8",
+        };
+      })
+      .filter((route): route is RouteColorRef => !!route);
+    return buildRelationshipDisplayColors(treeRoutes, relationshipRoutes, EDGE_PALETTE);
+  }, [vztahHrany, stromHrany, rre, routedTreeEdges]);
+  const postupMapy = velkaMapa
+    ? bigV ? 100 : bigM ? 90 : 55
     : 100;
-  const showMapRenderProgress = isLargeMapLoading;
-  const trimmedSearchQuery = searchQuery.trim();
-  const searchResults = useMemo(() => {
-    const query = normalizeSearchValue(searchQuery);
+  const ukazPostupMapy = nacitavaVelka;
+  const hladaneTrim = q.trim();
+  const vysledkyHladania = useMemo(() => {
+    const query = normalizeSearchValue(q);
     if (!query) {
       return [];
     }
@@ -755,7 +950,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
         const tagMatch = (node.tags ?? []).some((tag) => normalizeSearchValue(tag).includes(query));
         const noteMatch = normalizeSearchValue(node.note).includes(query);
-        const hidden = !visibleNodeIds.has(node.id);
+        const hidden = !viditelneIdcka.has(node.id);
 
         return {
           node,
@@ -772,36 +967,37 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       })
       .filter(Boolean)
       .slice(0, 8) as { node: MindMapNode; subtitle: string }[];
-  }, [nodes, searchQuery, t, visibleNodeIds]);
-  const selectedNode = selectedId ? map.nodes[selectedId] ?? null : null;
-  const selectedEdge = selectedEdgeId ? map.edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
+  }, [nodes, q, t, viditelneIdcka]);
+  const selectedNode = sid ? map.nodes[sid] ?? null : null;
+  const selectedEdge = seid ? map.edges.find((edge) => edge.id === seid) ?? null : null;
   const selectedEdgeFromNode = selectedEdge ? map.nodes[selectedEdge.fromId] ?? null : null;
   const selectedEdgeToNode = selectedEdge ? map.nodes[selectedEdge.toId] ?? null : null;
-  const shouldShowInspector = !!selectedNode && !linkMode && !changeParentMode && !selectedEdge && !repositionNodeId;
-  const bottomInset = !isLandscape && shouldShowInspector ? Math.max(inspectorH, 220) : 0;
+  const shouldShowInspector = !!selectedNode && !lm && !cpm && !selectedEdge && !rpId;
+  const bottomInset = !isLandscape && shouldShowInspector ? Math.max(ih, 220) : 0;
   const containerPaddingTop = isLandscape ? 0 : Math.max(insets.top, 8);
   const containerPaddingBottom = isLandscape ? Math.max(insets.bottom, 8) : Math.max(insets.bottom, 12);
   const containerPaddingLeft = isLandscape ? Math.max(insets.left, 12) : 16;
   const containerPaddingRight = isLandscape ? Math.max(insets.right, 12) : 16;
   const canvasTopGap = isLandscape ? 0 : 8;
+  const inspectorSideWidth = Math.min(360, Math.max(292, screenW * 0.34));
 
   useEffect(() => {
-    if (largeMapMode || !selectedNode || linkMode || changeParentMode || selectedEdge || repositionNodeId) {
+    if (velkaMapa || !selectedNode || lm || cpm || selectedEdge || rpId) {
       return;
     }
 
-    const focusScale = canvasScale || 1;
+    const focusScale = z || 1;
     canvasRef.current?.centerOn(
       worldToSurfaceX(selectedNode.x),
       worldToSurfaceY(selectedNode.y),
       focusScale
     );
   }, [
-    canvasScale,
-    changeParentMode,
-    largeMapMode,
-    linkMode,
-    repositionNodeId,
+    z,
+    cpm,
+    velkaMapa,
+    lm,
+    rpId,
     selectedEdge,
     selectedNode,
     worldToSurfaceX,
@@ -809,13 +1005,13 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   ]);
 
   useEffect(() => {
-    if (!largeMapMode || !largeMapVisible || didAutoFitMapIdRef.current === map.id) {
+    if (!velkaMapa || !bigV || didAutoFitMapIdRef.current === map.id) {
       return;
     }
 
     didAutoFitMapIdRef.current = map.id;
-    const availableW = Math.max(1, canvasTransform.width - 48);
-    const availableH = Math.max(1, canvasTransform.height - 48);
+    const availableW = Math.max(1, ct.width - 48);
+    const availableH = Math.max(1, ct.height - 48);
     const contentW = Math.max(1, mapBounds.width * (SURFACE_W / Math.max(1, WORLD_W)));
     const contentH = Math.max(1, mapBounds.height * (SURFACE_H / Math.max(1, WORLD_H)));
     const fitScale = Math.max(
@@ -834,10 +1030,10 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     SURFACE_W,
     WORLD_H,
     WORLD_W,
-    canvasTransform.height,
-    canvasTransform.width,
-    largeMapMode,
-    largeMapVisible,
+    ct.height,
+    ct.width,
+    velkaMapa,
+    bigV,
     map.id,
     map.nodes,
     map.rootId,
@@ -988,13 +1184,13 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   };
 
   const showMoveToast = useCallback((message: string) => {
-    setMoveToast(message);
-    if (moveToastTimeoutRef.current) {
-      clearTimeout(moveToastTimeoutRef.current);
+    setMt(message);
+    if (mtRef.current) {
+      clearTimeout(mtRef.current);
     }
-    moveToastTimeoutRef.current = setTimeout(() => {
-      setMoveToast(null);
-      moveToastTimeoutRef.current = null;
+    mtRef.current = setTimeout(() => {
+      setMt(null);
+      mtRef.current = null;
     }, 2200);
   }, []);
 
@@ -1004,7 +1200,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         const mapSnapshot = mapRef.current;
         const currentNode = mapSnapshot.nodes[nodeId];
         if (!currentNode || nodeId === mapSnapshot.rootId) {
-          setRepositionNodeId(null);
+          setRpId(null);
           return;
         }
 
@@ -1067,31 +1263,31 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             return nextNodes;
           })(),
         }));
-        setRepositionNodeId(null);
-        setSelectedId(nodeId);
+        setRpId(null);
+        setSid(nodeId);
       } finally {
-        setMoveInProgress(false);
+        setMb(false);
       }
     };
 
-    if (largeMapMode) {
-      setMoveInProgress(true);
+    if (velkaMapa) {
+      setMb(true);
       setTimeout(runMove, 80);
       return;
     }
 
     runMove();
-  }, [largeMapMode, showMoveToast, t]);
+  }, [velkaMapa, showMoveToast, t]);
 
   const addChildToSelected = () => {
-    if (!selectedId) {
+    if (!sid) {
       return;
     }
 
     const newId = `n_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     applyMap((prev) => {
-      const parent = prev.nodes[selectedId];
+      const parent = prev.nodes[sid];
       if (!parent) {
         return prev;
       }
@@ -1132,52 +1328,52 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       };
     });
 
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(newId);
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
+    setSid(newId);
   };
 
   const cancelLinkMode = () => {
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setSelectedEdgeId(null);
+    lref.current = null;
+    setLnk(null);
+    setSeid(null);
   };
 
   const startLinkMode = () => {
-    if (!selectedId) {
+    if (!sid) {
       return;
     }
 
-    if (linkFromId === selectedId) {
+    if (lnk === sid) {
       cancelLinkMode();
       return;
     }
 
-    setSelectedEdgeId(null);
-    setChangeParentNodeId(null);
-    linkFromIdRef.current = selectedId;
-    setLinkFromId(selectedId);
+    setSeid(null);
+    setCpId(null);
+    lref.current = sid;
+    setLnk(sid);
   };
 
   const cancelChangeParentMode = () => {
-    setChangeParentNodeId(null);
+    setCpId(null);
   };
 
   const startChangeParentMode = () => {
-    if (!selectedId || selectedId === map.rootId) {
+    if (!sid || sid === map.rootId) {
       return;
     }
 
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(selectedId);
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setCpId(sid);
   };
 
   const handleSelectLinkTarget = useCallback((targetId: string) => {
-    const fromId = linkFromIdRef.current;
+    const fromId = lref.current;
 
     if (!fromId) {
       return;
@@ -1210,15 +1406,15 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       };
     });
 
-    linkFromIdRef.current = null;
-    setSelectedEdgeId(null);
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(targetId);
+    lref.current = null;
+    setSeid(null);
+    setLnk(null);
+    setCpId(null);
+    setSid(null);
   }, []);
 
   const handleSelectChangeParentTarget = useCallback((targetId: string) => {
-    const nodeId = changeParentNodeId;
+    const nodeId = cpId;
     if (!nodeId) {
       return;
     }
@@ -1287,30 +1483,30 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       };
     });
 
-    setChangeParentNodeId(null);
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setSelectedId(nodeId);
-  }, [changeParentNodeId, showMoveToast, t]);
+    setCpId(null);
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setSid(nodeId);
+  }, [cpId, showMoveToast, t]);
 
   const handleSelectNode = useCallback((nodeId: string) => {
     Keyboard.dismiss();
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(nodeId);
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
+    setSid(nodeId);
   }, []);
 
   const handleStartReposition = useCallback((nodeId: string) => {
     Keyboard.dismiss();
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(null);
-    setRepositionNodeId(nodeId);
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
+    setSid(null);
+    setRpId(nodeId);
   }, []);
 
   const revealNode = (nodeId: string) => {
@@ -1343,12 +1539,12 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     const targetNode = map.nodes[nodeId];
     revealNode(nodeId);
     Keyboard.dismiss();
-    setSelectedEdgeId(null);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(nodeId);
-    setSearchQuery("");
+    setSeid(null);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
+    setSid(nodeId);
+    setQ("");
 
     if (targetNode) {
       canvasRef.current?.centerOn(
@@ -1374,58 +1570,58 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   };
 
   const handleZoomGestureStart = () => {
-    if (zoomHudTimeoutRef.current) {
-      clearTimeout(zoomHudTimeoutRef.current);
-      zoomHudTimeoutRef.current = null;
+    if (zhRef.current) {
+      clearTimeout(zhRef.current);
+      zhRef.current = null;
     }
-    setZoomHudVisible(true);
+    setZh(true);
   };
 
   const handleZoomGestureEnd = () => {
-    if (zoomHudTimeoutRef.current) {
-      clearTimeout(zoomHudTimeoutRef.current);
+    if (zhRef.current) {
+      clearTimeout(zhRef.current);
     }
 
-    zoomHudTimeoutRef.current = setTimeout(() => {
-      setZoomHudVisible(false);
-      zoomHudTimeoutRef.current = null;
+    zhRef.current = setTimeout(() => {
+      setZh(false);
+      zhRef.current = null;
     }, 700);
   };
 
   const handleSelectRelationshipEdge = useCallback((edgeId: string) => {
-    setSelectedEdgeId(edgeId);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
-    setSelectedId(null);
+    setSeid(edgeId);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
+    setSid(null);
   }, []);
 
   const handleLongPressRelationshipEdge = useCallback((edgeId: string) => {
-    setSelectedId(null);
-    setSelectedEdgeId(edgeId);
-    linkFromIdRef.current = null;
-    setLinkFromId(null);
-    setChangeParentNodeId(null);
+    setSid(null);
+    setSeid(edgeId);
+    lref.current = null;
+    setLnk(null);
+    setCpId(null);
   }, []);
 
   const handleCanvasPress = useCallback(() => {
-    if (repositionNodeId) {
+    if (rpId) {
       return;
     }
 
     Keyboard.dismiss();
-    if (selectedEdgeId) {
-      setSelectedEdgeId(null);
+    if (seid) {
+      setSeid(null);
       return;
     }
 
-    if (!linkMode && !changeParentMode) {
-      setSelectedId(null);
+    if (!lm && !cpm) {
+      setSid(null);
     }
-  }, [changeParentMode, linkMode, repositionNodeId, selectedEdgeId]);
+  }, [cpm, lm, rpId, seid]);
 
   const handlePlacementTap = useCallback((locationX: number, locationY: number) => {
-    if (!repositionNodeId) {
+    if (!rpId) {
       return;
     }
 
@@ -1435,23 +1631,23 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     }
 
     attemptRepositionNode(
-      repositionNodeId,
+      rpId,
       surfaceToWorldX(target.x),
       surfaceToWorldY(target.y)
     );
-  }, [attemptRepositionNode, repositionNodeId, surfaceToWorldX, surfaceToWorldY]);
+  }, [attemptRepositionNode, rpId, surfaceToWorldX, surfaceToWorldY]);
 
   const deleteSelectedRelationshipEdge = () => {
-    if (!selectedEdgeId) {
+    if (!seid) {
       return;
     }
 
     applyMap((prev) => ({
       ...prev,
-      edges: prev.edges.filter((edge) => edge.id !== selectedEdgeId),
+      edges: prev.edges.filter((edge) => edge.id !== seid),
     }));
 
-    setSelectedEdgeId(null);
+    setSeid(null);
   };
 
   const updateSelectedRelationshipEdge = (patch: {
@@ -1459,14 +1655,14 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     width?: number;
     color?: string;
   }) => {
-    if (!selectedEdgeId) {
+    if (!seid) {
       return;
     }
 
     applyMap((prev) => ({
       ...prev,
       edges: prev.edges.map((edge) =>
-        edge.id === selectedEdgeId
+        edge.id === seid
           ? {
               ...edge,
               ...patch,
@@ -1487,7 +1683,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       ((selectedEdge.fromId === nodeId && selectedEdge.toId === connectedNodeId) ||
         (selectedEdge.fromId === connectedNodeId && selectedEdge.toId === nodeId))
     ) {
-      setSelectedEdgeId(null);
+      setSeid(null);
     }
   };
 
@@ -1529,22 +1725,22 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       };
     });
 
-    if (selectedId === nodeId) {
-      setSelectedId(null);
+    if (sid === nodeId) {
+      setSid(null);
     }
-    if (linkFromIdRef.current === nodeId) {
-      linkFromIdRef.current = null;
-      setLinkFromId(null);
+    if (lref.current === nodeId) {
+      lref.current = null;
+      setLnk(null);
     }
     if (selectedEdge && (selectedEdge.fromId === nodeId || selectedEdge.toId === nodeId)) {
-      setSelectedEdgeId(null);
+      setSeid(null);
     }
   };
 
   const renderSvgNode = (node: MindMapNode) => {
     const isRootNode = node.id === map.rootId;
-    const selected = node.id === selectedId;
-    const placementMode = repositionNodeId === node.id;
+    const selected = node.id === sid;
+    const placementMode = rpId === node.id;
     const bounds = getNodeRenderBounds(node, isRootNode);
     const isCapsule = node.shape === "capsule";
     const isCircle = node.shape === "circle";
@@ -1565,12 +1761,12 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         return;
       }
 
-      if (changeParentMode) {
+      if (cpm) {
         handleSelectChangeParentTarget(node.id);
         return;
       }
 
-      if (linkMode) {
+      if (lm) {
         handleSelectLinkTarget(node.id);
         return;
       }
@@ -1580,7 +1776,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
     const handleNodeLongPress = (event?: { stopPropagation?: () => void }) => {
       event?.stopPropagation?.();
-      if (linkMode || changeParentMode || placementMode) {
+      if (lm || cpm || placementMode) {
         return;
       }
 
@@ -1679,19 +1875,19 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
           <ZoomableCanvas
             ref={canvasRef}
             key={`canvas:${map.id}:${canvasKey}`}
-            enabled={!repositionNodeId}
-            minScale={largeMapMode ? 0.12 : 0.25}
+            enabled={!rpId}
+            minScale={velkaMapa ? 0.12 : 0.25}
             maxScale={1}
-            onScaleChange={setCanvasScale}
+            onScaleChange={setZ}
             onDoubleTap={resetViewToRoot}
-            tapEnabled={!!repositionNodeId}
+            tapEnabled={!!rpId}
             onTapPoint={handlePlacementTap}
             onZoomGestureStart={handleZoomGestureStart}
             onZoomGestureEnd={handleZoomGestureEnd}
-            onTransformChange={setCanvasTransform}
+            onTransformChange={setCt}
             notifyTransformDuringGesture
-            transformNotifyIntervalMs={largeMapMode ? 180 : 80}
-            notifyScaleDuringGesture={!largeMapMode}
+            transformNotifyIntervalMs={velkaMapa ? 180 : 80}
+            notifyScaleDuringGesture={!velkaMapa}
             contentWidth={SURFACE_W}
             contentHeight={SURFACE_H}
           >
@@ -1755,7 +1951,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                   onPress={Platform.OS === "android" ? undefined : handleCanvasPress}
                 />
 
-                {shouldRenderMapContent ? renderedTreeEdgeRefs.map(({ id, parentNode, childNode }) => (
+                {kreslitObsah ? stromHrany.map(({ id, parentNode, childNode }) => (
                   <EdgeView
                     key={id}
                     from={{ x: parentNode.x, y: parentNode.y }}
@@ -1769,10 +1965,11 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                   />
                 )) : null}
 
-                {shouldRenderMapContent ? renderedRelationshipEdges.map((edge) => {
+                {kreslitObsah ? vztahHrany.map((edge) => {
                   const fromNode = map.nodes[edge.fromId];
                   const toNode = map.nodes[edge.toId];
-                  if (!fromNode || !toNode) {
+                  const points = rre[edge.id]?.points;
+                  if (!fromNode || !toNode || !points) {
                     return null;
                   }
 
@@ -1781,35 +1978,35 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                       key={edge.id}
                       from={{ x: fromNode.x, y: fromNode.y }}
                       to={{ x: toNode.x, y: toNode.y }}
-                      points={routedRelationshipEdges[edge.id]?.points}
+                      points={points}
                       edgeStyle={edge.style ?? "dashed"}
                       width={edge.width ?? 2}
-                      color={edge.color ?? "#94a3b8"}
-                      selected={selectedEdgeId === edge.id}
-                      onPress={largeMapMode ? undefined : () => handleSelectRelationshipEdge(edge.id)}
-                      onLongPress={largeMapMode ? undefined : () => handleLongPressRelationshipEdge(edge.id)}
-                      hitSlopWidth={largeMapMode ? 0 : 20}
+                      color={farbyVztahov[edge.id] ?? edge.color ?? "#94a3b8"}
+                      selected={seid === edge.id}
+                      onPress={velkaMapa ? undefined : () => handleSelectRelationshipEdge(edge.id)}
+                      onLongPress={velkaMapa ? undefined : () => handleLongPressRelationshipEdge(edge.id)}
+                      hitSlopWidth={velkaMapa ? 0 : 20}
                     />
                   );
                 }) : null}
 
-                {shouldRenderMapContent && largeMapMode ? renderedVisibleNodes.map(renderSvgNode) : null}
+                {kreslitObsah && velkaMapa ? kresleneUzly.map(renderSvgNode) : null}
               </Svg>
 
-              {shouldRenderMapContent && !largeMapMode ? (
+              {kreslitObsah && !velkaMapa ? (
                 <View style={{ position: "absolute", top: 0, left: 0, width: SURFACE_W, height: SURFACE_H }} pointerEvents="box-none">
-                  {renderedVisibleNodes.map((node) => (
+                  {kresleneUzly.map((node) => (
                     <EditableNodeView
                       key={node.id}
                       node={node}
                       worldWidth={SURFACE_W}
                       worldHeight={SURFACE_H}
                       isRoot={node.id === map.rootId}
-                      selected={node.id === selectedId}
+                      selected={node.id === sid}
                       shape={node.shape}
-                      placementMode={repositionNodeId === node.id}
-                      linkMode={linkMode}
-                      changeParentMode={changeParentMode}
+                      placementMode={rpId === node.id}
+                      linkMode={lm}
+                      changeParentMode={cpm}
                       onSelect={handleSelectNode}
                       onSelectLinkTarget={handleSelectLinkTarget}
                       onSelectChangeParentTarget={handleSelectChangeParentTarget}
@@ -1821,13 +2018,13 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             </View>
           </ZoomableCanvas>
 
-          {!linkMode && !changeParentMode && !selectedEdge && !repositionNodeId ? (
-            <View style={ui.topOverlay}>
+          {!lm && !cpm && !selectedEdge && !rpId ? (
+            <View style={[ui.topOverlay, isLandscape && ui.topOverlayLandscape]}>
               <View style={[ui.topRow, isLandscape && ui.topRowLandscape]}>
                 <View style={[ui.searchPanel, isLandscape && ui.searchPanelLandscape]}>
                   <TextInput
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
+                    value={q}
+                    onChangeText={setQ}
                     placeholder={t("map.searchPlaceholder")}
                     placeholderTextColor="#94a3b8"
                     style={[ui.searchInput, isDark && ui.searchInputDark]}
@@ -1838,9 +2035,14 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                   {selectedNode ? (
                     <Pressable
                       onPress={addChildToSelected}
-                      style={({ pressed }) => [ui.actionButton, ui.primaryButton, pressed && ui.pressed]}
+                      style={({ pressed }) => [
+                        ui.actionButton,
+                        isLandscape && ui.actionButtonLandscape,
+                        ui.primaryButton,
+                        pressed && ui.pressed,
+                      ]}
                     >
-                      <Text style={ui.primaryButtonText}>＋</Text>
+                      <Text style={[ui.primaryButtonText, isLandscape && ui.primaryButtonTextLandscape]}>＋</Text>
                     </Pressable>
                   ) : null}
                   {selectedNode ? (
@@ -1848,12 +2050,15 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                       onPress={startLinkMode}
                       style={({ pressed }) => [
                         ui.actionButton,
+                        isLandscape && ui.actionButtonLandscape,
                         ui.secondaryButton,
                         isDark && ui.secondaryButtonDark,
                         pressed && ui.pressed,
                       ]}
                     >
-                      <Text style={[ui.secondaryButtonText, isDark && ui.secondaryButtonTextDark]}>{t("map.link")}</Text>
+                      <Text style={[ui.secondaryButtonText, isLandscape && ui.secondaryButtonTextLandscape, isDark && ui.secondaryButtonTextDark]}>
+                        {t("map.link")}
+                      </Text>
                     </Pressable>
                   ) : null}
                   {selectedNode && selectedNode.id !== map.rootId ? (
@@ -1861,22 +2066,25 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                       onPress={startChangeParentMode}
                       style={({ pressed }) => [
                         ui.actionButton,
+                        isLandscape && ui.actionButtonLandscape,
                         ui.secondaryButton,
                         isDark && ui.secondaryButtonDark,
                         pressed && ui.pressed,
                       ]}
                     >
-                      <Text style={[ui.secondaryButtonText, isDark && ui.secondaryButtonTextDark]}>{t("map.changeParent")}</Text>
+                      <Text style={[ui.secondaryButtonText, isLandscape && ui.secondaryButtonTextLandscape, isDark && ui.secondaryButtonTextDark]}>
+                        {t("map.changeParent")}
+                      </Text>
                     </Pressable>
                   ) : null}
                 </View>
               </View>
-              {trimmedSearchQuery ? (
+              {hladaneTrim ? (
                 <View style={[ui.searchResults, isDark && ui.searchResultsDark, isLandscape && ui.searchResultsLandscape]}>
-                  {searchResults.length === 0 ? (
+                  {vysledkyHladania.length === 0 ? (
                     <Text style={[ui.searchEmpty, isDark && ui.searchEmptyDark]}>{t("map.noMatchingNodes")}</Text>
                   ) : (
-                    searchResults.map(({ node, subtitle }) => (
+                    vysledkyHladania.map(({ node, subtitle }) => (
                       <Pressable
                         key={node.id}
                         onPress={() => handleSelectSearchResult(node.id)}
@@ -1896,7 +2104,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             </View>
           ) : null}
 
-          {linkMode ? (
+          {lm ? (
             <View style={[ui.banner, isLandscape && ui.bannerLandscape]}>
               <Text style={ui.bannerText}>{t("map.selectSecondNode")}</Text>
               <Pressable onPress={cancelLinkMode} style={({ pressed }) => [ui.bannerButton, pressed && ui.pressed]}>
@@ -1905,7 +2113,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             </View>
           ) : null}
 
-          {changeParentMode ? (
+          {cpm ? (
             <View style={[ui.banner, isLandscape && ui.bannerLandscape]}>
               <Text style={ui.bannerText}>{t("map.selectNewParentNode")}</Text>
               <Pressable onPress={cancelChangeParentMode} style={({ pressed }) => [ui.bannerButton, pressed && ui.pressed]}>
@@ -1914,10 +2122,10 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             </View>
           ) : null}
 
-          {repositionNodeId ? (
+          {rpId ? (
             <View style={[ui.banner, isLandscape && ui.bannerLandscape]}>
               <Text style={ui.bannerText}>{t("map.tapWhereMoveNode")}</Text>
-              <Pressable onPress={() => setRepositionNodeId(null)} style={({ pressed }) => [ui.bannerButton, pressed && ui.pressed]}>
+              <Pressable onPress={() => setRpId(null)} style={({ pressed }) => [ui.bannerButton, pressed && ui.pressed]}>
                 <Text style={ui.bannerButtonText}>{t("common.cancel")}</Text>
               </Pressable>
             </View>
@@ -2013,19 +2221,19 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             </View>
           ) : null}
 
-          {zoomHudVisible ? (
+          {zh ? (
             <View style={[ui.zoomHud, isLandscape && ui.zoomHudLandscape]}>
-              <Text style={ui.zoomHudText}>{Math.round(canvasScale * 100)}%</Text>
+              <Text style={ui.zoomHudText}>{Math.round(z * 100)}%</Text>
             </View>
           ) : null}
 
-          {moveToast ? (
+          {mt ? (
             <View style={[ui.moveToast, isLandscape && ui.moveToastLandscape]}>
-              <Text style={ui.moveToastText}>{moveToast}</Text>
+              <Text style={ui.moveToastText}>{mt}</Text>
             </View>
           ) : null}
 
-          {moveInProgress ? (
+          {mb ? (
             <View style={[ui.mapLoadOverlay, isDark && ui.mapLoadOverlayDark]}>
               <View style={[ui.mapLoadCard, isDark && ui.mapLoadCardDark, isLandscape && ui.mapLoadCardLandscape]}>
                 <View style={ui.mapLoadProgressHeader}>
@@ -2036,7 +2244,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                 </View>
               </View>
             </View>
-          ) : showMapRenderProgress ? (
+          ) : ukazPostupMapy ? (
             <View style={[ui.mapLoadOverlay, isDark && ui.mapLoadOverlayDark]}>
               <View style={[ui.mapLoadCard, isDark && ui.mapLoadCardDark, isLandscape && ui.mapLoadCardLandscape]}>
                 <View style={ui.mapLoadProgressHeader}>
@@ -2044,11 +2252,11 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                     {t("map.loadingMap")}
                   </Text>
                   <Text style={[ui.mapLoadProgressPercent, isDark && ui.mapLoadProgressPercentDark]}>
-                    {mapRenderProgress}%
+                    {postupMapy}%
                   </Text>
                 </View>
                 <View style={[ui.mapLoadProgressTrack, isDark && ui.mapLoadProgressTrackDark]}>
-                  <View style={[ui.mapLoadProgressFill, { width: `${mapRenderProgress}%` }]} />
+                  <View style={[ui.mapLoadProgressFill, { width: `${postupMapy}%` }]} />
                 </View>
               </View>
             </View>
@@ -2058,11 +2266,11 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         {shouldShowInspector ? (
           <NodeInspector
             mode={isLandscape ? "side" : "sheet"}
-            sideWidth={340}
+            sideWidth={inspectorSideWidth}
             node={selectedNode}
             nodes={map.nodes}
             edges={map.edges}
-            onClose={() => setSelectedId(null)}
+            onClose={() => setSid(null)}
             onUpdateTitle={updateTitle}
             onUpdateNote={updateNote}
             onUpdateTags={updateTags}
@@ -2074,7 +2282,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             onUpdateSize={updateSize}
             onUpdateShape={updateShape}
             onUpdateEdge={updateEdge}
-            onHeight={isLandscape ? () => {} : setInspectorH}
+            onHeight={isLandscape ? () => {} : setIh}
             onSelectNode={handleSelectNode}
             onDeleteConnection={deleteConnection}
             onDeleteNode={deleteNode}

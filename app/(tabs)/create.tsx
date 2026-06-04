@@ -5,7 +5,7 @@
 import React, { useCallback, useRef } from "react";
 import { View, ActivityIndicator, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 import { createMap } from "@/src/storage/mapsRepo";
 
 function getErrorMessage(error: unknown, fallback: string): string {

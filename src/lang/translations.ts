@@ -1,5 +1,5 @@
 /**
- * Súbor: src/i18n/translations.ts
+ * Súbor: src/lang/translations.ts
  * Abstrakt: Obsahuje slovník textov aplikácie v podporovaných jazykoch.
  */
 export type AppLanguage = "en" | "sk";
@@ -72,6 +72,8 @@ export const translations: Record<AppLanguage, Record<string, string>> = {
     "account.passwordUpdated": "Password updated",
     "account.passwordError": "Password error",
     "account.failedUpdatePassword": "Failed to update password",
+    "account.logoutError": "Logout error",
+    "account.failedLogout": "Failed to log out",
 
     "create.createFailed": "Create failed",
     "create.unknownError": "Unknown error",
@@ -254,6 +256,8 @@ export const translations: Record<AppLanguage, Record<string, string>> = {
     "account.passwordUpdated": "Heslo bolo aktualizované",
     "account.passwordError": "Chyba hesla",
     "account.failedUpdatePassword": "Nepodarilo sa aktualizovať heslo",
+    "account.logoutError": "Chyba odhlásenia",
+    "account.failedLogout": "Nepodarilo sa odhlásiť",
 
     "create.createFailed": "Vytvorenie zlyhalo",
     "create.unknownError": "Neznáma chyba",

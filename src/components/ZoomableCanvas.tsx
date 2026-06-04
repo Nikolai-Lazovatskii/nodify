@@ -134,6 +134,7 @@ const ZoomableCanvas = forwardRef<ZoomableCanvasHandle, Props>(function Zoomable
     });
   }, [notifyTransformDuringGesture, onTransformChange, transformNotifyIntervalMs]);
 
+
   const clampOffsets = (
     nextTx: number,
     nextTy: number,

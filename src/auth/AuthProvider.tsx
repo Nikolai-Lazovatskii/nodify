@@ -93,20 +93,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-      if (error) {
-        setSession(null);
-      } else {
-        setSession(data.session ?? null);
-        if (data.session) {
-          void runSync();
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (!mounted) return;
+        if (error) {
+          setSession(null);
+          setIsOnline(false);
+          setSyncError(getErrorMessage(error));
         } else {
-          setPendingSyncCount(0);
+          setSession(data.session ?? null);
+          if (data.session) {
+            void runSync();
+          } else {
+            setPendingSyncCount(0);
+          }
         }
-      }
-      setLoading(false);
-    });
+      })
+      .catch((error: unknown) => {
+        if (!mounted) return;
+        setSession(null);
+        setIsOnline(false);
+        setSyncError(getErrorMessage(error));
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoading(false);
+        }
+      });
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       setSession(nextSession ?? null);

@@ -1,5 +1,5 @@
 /**
- * Súbor: src/i18n/LanguagePreference.tsx
+ * Súbor: src/lang/LanguagePreference.tsx
  * Abstrakt: Spravuje jazykové nastavenie aplikácie a poskytuje preklady komponentom.
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";

@@ -39,6 +39,21 @@ describe("importFromMm", () => {
     expect(map.nodes.child.title).toBe("Child");
   });
 
+  it("imports XML attributes wrapped in single quotes", async () => {
+    const xml = `<?xml version='1.0'?>
+<map version='1.0.1'>
+  <node ID='root' TEXT='Root &amp; stuff'>
+    <node ID='child' TEXT='Child node' />
+  </node>
+</map>`;
+
+    const map = await importFromMm(xml);
+
+    expect(map.rootId).toBe("root");
+    expect(map.nodes.root.title).toBe("Root & stuff");
+    expect(map.nodes.child.parentId).toBe("root");
+  });
+
   it("keeps parentId and children consistent", async () => {
     const map = await importFromMm(minimalMm);
 
@@ -64,6 +79,21 @@ describe("importFromMm", () => {
 
     expect(map.nodes.child.note).toBe("Line one\nLine two");
     expect(map.nodes.child.tags).toEqual(["planning", "mobile"]);
+  });
+
+  it("keeps literal angle brackets in notes instead of treating them as HTML", async () => {
+    const xml = `<?xml version="1.0"?>
+<map version="1.0.1">
+  <node ID="root" TEXT="Root">
+    <node ID="child" TEXT="Child">
+      <richcontent TYPE="NOTE"><html><body>Use &lt;tag&gt; &amp; keep text</body></html></richcontent>
+    </node>
+  </node>
+</map>`;
+
+    const map = await importFromMm(xml);
+
+    expect(map.nodes.child.note).toBe("Use <tag> & keep text");
   });
 
   it("imports collapsed state from folded branches", async () => {

@@ -2,8 +2,9 @@
  * Súbor: src/export/xmind.ts
  * Abstrakt: Prevádza internú myšlienkovú mapu do štruktúr a súborov formátu XMind.
  */
-import { MindMap, MindMapNode, RelationshipEdge } from "../types/map";
+import { MindMap, MindMapNode, NodeAttachment, RelationshipEdge } from "../types/map";
 import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
+import { makeNodeRouteRect, routeEdgePoints } from "../screens/mapScreen/routing";
 import templateContent from "./templates/content.json";
 
 function escapeText(s: string) {
@@ -222,6 +223,58 @@ function applyManagedLabels(targetTopic: Record<string, unknown>, node: MindMapN
   }
 }
 
+function normalizeAttachmentForExport(attachment: NodeAttachment): Record<string, unknown> | null {
+  const id = attachment.id?.trim();
+  const name = attachment.name?.trim();
+  const uri = attachment.uri?.trim();
+  if (!id || !name || !uri) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    uri,
+    mimeType: attachment.mimeType?.trim() || undefined,
+    size: Number.isFinite(attachment.size) ? attachment.size : undefined,
+  };
+}
+
+function buildNodifyNodeMetadata(node: MindMapNode): Record<string, unknown> | null {
+  const attachments = (node.attachments ?? [])
+    .map(normalizeAttachmentForExport)
+    .filter((attachment): attachment is Record<string, unknown> => !!attachment);
+  const dueAt = typeof node.dueAt === "string" && node.dueAt.trim() ? node.dueAt.trim() : undefined;
+  const nodifyData: Record<string, unknown> = {};
+
+  if (dueAt) {
+    nodifyData.dueAt = dueAt;
+  }
+
+  if (attachments.length > 0) {
+    nodifyData.attachments = attachments;
+  }
+
+  return Object.keys(nodifyData).length > 0 ? nodifyData : null;
+}
+
+export function exportToNodifyXmindMetadataJson(map: MindMap): string | null {
+  const nodes: Record<string, unknown> = {};
+
+  for (const node of Object.values(map.nodes)) {
+    const metadata = buildNodifyNodeMetadata(node);
+    if (metadata) {
+      nodes[node.id] = metadata;
+    }
+  }
+
+  if (Object.keys(nodes).length === 0) {
+    return null;
+  }
+
+  return JSON.stringify({ version: 1, nodes }, null, 2);
+}
+
 function applyManagedTopicPosition(targetTopic: Record<string, unknown>, node: MindMapNode) {
   const rawPosition = asRecord(targetTopic.position);
   targetTopic.position = {
@@ -259,9 +312,13 @@ function buildTopic(
   nextVisited.add(nodeId);
 
   const childrenIds = (node.children ?? []).filter((cid) => !!map.nodes[cid]);
-  const attached = childrenIds
-    .map((cid) => buildTopic(map, cid, nextVisited, detachedTopicsByParent))
-    .filter(Boolean);
+  const attached: Record<string, unknown>[] = [];
+  for (const cid of childrenIds) {
+    const childTopic = buildTopic(map, cid, nextVisited, detachedTopicsByParent);
+    if (childTopic) {
+      attached.push(childTopic);
+    }
+  }
 
   const topic = getBaseTopic(node);
   topic.id = node.id;
@@ -358,6 +415,76 @@ function applyManagedRelationshipStyle(
   relationship.style = { ...style, properties: nextProperties };
 }
 
+function routeMidpoint(points: { x: number; y: number }[]) {
+  if (points.length <= 2) {
+    return null;
+  }
+
+  const totalLength = points.slice(0, -1).reduce((sum, point, index) => {
+    const next = points[index + 1];
+    return sum + Math.abs(next.x - point.x) + Math.abs(next.y - point.y);
+  }, 0);
+
+  if (totalLength <= 0) {
+    return null;
+  }
+
+  let travelled = 0;
+  const halfway = totalLength / 2;
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const next = points[index + 1];
+    const segmentLength = Math.abs(next.x - point.x) + Math.abs(next.y - point.y);
+
+    if (travelled + segmentLength >= halfway) {
+      const ratio = segmentLength === 0 ? 0 : (halfway - travelled) / segmentLength;
+      return {
+        x: point.x + (next.x - point.x) * ratio,
+        y: point.y + (next.y - point.y) * ratio,
+      };
+    }
+
+    travelled += segmentLength;
+  }
+
+  return points[Math.floor(points.length / 2)] ?? null;
+}
+
+function roundCoordinate(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function buildRelationshipControlPoints(map: MindMap, edge: RelationshipEdge, routeSeed: number) {
+  const fromNode = map.nodes[edge.fromId];
+  const toNode = map.nodes[edge.toId];
+  if (!fromNode || !toNode) {
+    return null;
+  }
+
+  const excludedIds = new Set([edge.fromId, edge.toId]);
+  const obstacles = Object.values(map.nodes)
+    .filter((node) => !excludedIds.has(node.id))
+    .map((node) => makeNodeRouteRect(node, node.id === map.rootId, 24));
+  const route = routeEdgePoints(fromNode, toNode, obstacles, routeSeed);
+  const midpoint = routeMidpoint(route);
+
+  if (!midpoint) {
+    return null;
+  }
+
+  return {
+    "0": {
+      x: roundCoordinate(midpoint.x),
+      y: roundCoordinate(midpoint.y),
+    },
+    "1": {
+      angle: 0,
+      amount: 0.5,
+    },
+  };
+}
+
 function buildRelationships(
   map: MindMap,
   sheet: Record<string, unknown>
@@ -375,7 +502,7 @@ function buildRelationships(
   const built: Record<string, unknown>[] = [];
   const usedIds = new Set<string>();
 
-  for (const edge of map.edges) {
+  for (const [edgeIndex, edge] of map.edges.entries()) {
     if (!map.nodes[edge.fromId] || !map.nodes[edge.toId] || edge.fromId === edge.toId) {
       continue;
     }
@@ -399,6 +526,10 @@ function buildRelationships(
     relationship.end1Id = edge.fromId;
     relationship.end2Id = edge.toId;
     applyManagedRelationshipStyle(relationship, edge);
+    const controlPoints = buildRelationshipControlPoints(map, edge, edgeIndex + 97);
+    if (controlPoints) {
+      relationship.controlPoints = controlPoints;
+    }
 
     built.push(relationship);
   }
@@ -429,10 +560,17 @@ export function exportToXmindZenContentJson(map: MindMap): string {
   const templateRoot = Object.keys(existingRoot).length > 0 ? existingRoot : getTemplateRootTopic(sheet);
 
   const detachedTopicsByParent = new Map<string, unknown[]>();
-  const floatingTopics = Object.values(exportMap.nodes)
-    .filter((node) => node.parentId === null && node.id !== exportMap.rootId)
-    .map((node) => buildTopic(exportMap, node.id, new Set([exportMap.rootId]), detachedTopicsByParent))
-    .filter(Boolean) as Record<string, unknown>[];
+  const floatingTopics: Record<string, unknown>[] = [];
+  for (const node of Object.values(exportMap.nodes)) {
+    if (node.parentId !== null || node.id === exportMap.rootId) {
+      continue;
+    }
+
+    const topic = buildTopic(exportMap, node.id, new Set([exportMap.rootId]), detachedTopicsByParent);
+    if (topic) {
+      floatingTopics.push(topic);
+    }
+  }
   detachedTopicsByParent.set(exportMap.rootId, floatingTopics);
 
   const rootTopic = buildTopic(exportMap, exportMap.rootId, new Set(), detachedTopicsByParent);

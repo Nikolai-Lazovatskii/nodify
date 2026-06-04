@@ -22,6 +22,7 @@ declare const expect: (actual: unknown) => TestMatchers;
 type XMindTopicFixture = {
   id: string;
   title: string;
+  href?: string;
   branch?: string;
   labels?: string[];
   notes?: {
@@ -35,6 +36,18 @@ type XMindTopicFixture = {
   };
   style?: {
     properties?: Record<string, string>;
+  };
+  extensions?: {
+    nodify?: {
+      dueAt?: string;
+      attachments?: {
+        id?: string;
+        name?: string;
+        uri?: string;
+        mimeType?: string;
+        size?: number;
+      }[];
+    };
   };
 };
 
@@ -54,11 +67,14 @@ type XMindSheetFixture = {
 
 let sheet: XMindSheetFixture;
 
-async function createXmindZipBase64(content: unknown): Promise<string> {
+async function createXmindZipBase64(content: unknown, nodifyMetadata?: unknown): Promise<string> {
   const zip = new JSZip();
   zip.file("content.json", JSON.stringify(content));
   zip.file("manifest.json", JSON.stringify({ "file-entries": {} }));
   zip.file("metadata.json", JSON.stringify({ creator: "test" }));
+  if (nodifyMetadata) {
+    zip.file("nodify-metadata.json", JSON.stringify(nodifyMetadata));
+  }
   return zip.generateAsync({ type: "base64" });
 }
 
@@ -114,6 +130,110 @@ describe("importFromXmind", () => {
     expect(map.nodes.branch.tags).toEqual(["tag-a", "tag-b"]);
     expect(map.nodes.branch.note).toBe("Remember this");
     expect(map.nodes.branch.children).toEqual(["leaf"]);
+  });
+
+  it("imports Nodify due date and attachments from the sidecar metadata file", async () => {
+    sheet.rootTopic.children = {
+      attached: [
+        {
+          id: "branch",
+          title: "Branch",
+        },
+      ],
+    };
+
+    const map = await importFromXmind(await createXmindZipBase64(
+      { sheets: [sheet] },
+      {
+        version: 1,
+        nodes: {
+          branch: {
+            dueAt: "2026-06-10T08:30:00.000Z",
+            attachments: [
+              {
+                id: "attachment-1",
+                name: "brief.pdf",
+                uri: "file:///brief.pdf",
+                mimeType: "application/pdf",
+                size: 2048,
+              },
+            ],
+          },
+        },
+      }
+    ));
+
+    expect(map.nodes.branch.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(map.nodes.branch.attachments).toEqual([
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ]);
+  });
+
+  it("imports legacy Nodify due date and attachments from topic metadata", async () => {
+    sheet.rootTopic.children = {
+      attached: [
+        {
+          id: "branch",
+          title: "Branch",
+          extensions: {
+            nodify: {
+              dueAt: "2026-06-10T08:30:00.000Z",
+              attachments: [
+                {
+                  id: "attachment-1",
+                  name: "brief.pdf",
+                  uri: "file:///brief.pdf",
+                  mimeType: "application/pdf",
+                  size: 2048,
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const map = await importFromXmind(await createXmindZipBase64({ sheets: [sheet] }));
+
+    expect(map.nodes.branch.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(map.nodes.branch.attachments).toEqual([
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ]);
+  });
+
+  it("imports XMind topic href as an attachment link", async () => {
+    sheet.rootTopic.children = {
+      attached: [
+        {
+          id: "branch",
+          title: "Branch",
+          href: "file:///brief.pdf",
+        },
+      ],
+    };
+
+    const map = await importFromXmind(await createXmindZipBase64({ sheets: [sheet] }));
+
+    expect(map.nodes.branch.attachments).toEqual([
+      {
+        id: "xmind_href_branch",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+      },
+    ]);
   });
 
   it("imports free relationship edges", async () => {

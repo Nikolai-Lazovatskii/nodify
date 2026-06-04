@@ -90,21 +90,25 @@ function buildMmLinkAttachment(nodeId: string, attrs: Record<string, string>, fa
 }
 
 function decodeHtmlToText(value: string): string {
-  return decodeXmlText(value)
+  return decodeXmlText(value
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/&lt;br\s*\/?&gt;/gi, "\n")
     .replace(/<\/p>\s*<p>/gi, "\n\n")
+    .replace(/&lt;\/p&gt;\s*&lt;p&gt;/gi, "\n\n")
     .replace(/<[^>]+>/g, "")
+  )
     .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
     .trim();
 }
 
 function parseAttributes(input: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const attrRegex = /([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*"([^"]*)"/g;
+  const attrRegex = /([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let match: RegExpExecArray | null = null;
 
   while ((match = attrRegex.exec(input))) {
-    attrs[match[1]] = decodeXmlText(match[2]);
+    attrs[match[1]] = decodeXmlText(match[2] ?? match[3]);
   }
 
   return attrs;

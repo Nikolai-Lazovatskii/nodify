@@ -7,7 +7,7 @@ import JSZip from "jszip";
 import { importFromXmind } from "../../import/xmind";
 import type { MindMap, MindMapNode } from "../../types/map";
 import { exportXmind } from "../doExportXmind";
-import { exportToXmindZenContentJson } from "../xmind";
+import { exportToNodifyXmindMetadataJson, exportToXmindZenContentJson } from "../xmind";
 
 type TestMatchers = {
   not: TestMatchers;
@@ -32,6 +32,7 @@ declare const jest: JestGlobal;
 type XMindTopicOutput = {
   id?: string;
   title?: string;
+  href?: string;
   branch?: string;
   labels?: string[];
   notes?: {
@@ -43,6 +44,18 @@ type XMindTopicOutput = {
     attached?: XMindTopicOutput[];
     detached?: XMindTopicOutput[];
   };
+  extensions?: {
+    nodify?: {
+      dueAt?: string;
+      attachments?: {
+        id?: string;
+        name?: string;
+        uri?: string;
+        mimeType?: string;
+        size?: number;
+      }[];
+    };
+  };
 };
 
 type XMindSheetOutput = {
@@ -52,10 +65,34 @@ type XMindSheetOutput = {
     id?: string;
     end1Id?: string;
     end2Id?: string;
+    controlPoints?: {
+      "0"?: {
+        x?: number;
+        y?: number;
+      };
+      "1"?: {
+        angle?: number;
+        amount?: number;
+      };
+    };
     style?: {
       properties?: Record<string, string>;
     };
   }[];
+};
+
+type NodifyMetadataOutput = {
+  version?: number;
+  nodes?: Record<string, {
+    dueAt?: string;
+    attachments?: {
+      id?: string;
+      name?: string;
+      uri?: string;
+      mimeType?: string;
+      size?: number;
+    }[];
+  }>;
 };
 
 const mockWrittenFiles: { uri: string; value: string; options: unknown }[] = [];
@@ -88,11 +125,14 @@ function parseFirstSheet(json: string): XMindSheetOutput {
   return Array.isArray(content) ? content[0] : content.sheets?.[0] ?? {};
 }
 
-async function createZipFromContentJson(contentJson: string): Promise<string> {
+async function createZipFromContentJson(contentJson: string, nodifyMetadataJson?: string | null): Promise<string> {
   const zip = new JSZip();
   zip.file("content.json", contentJson);
   zip.file("manifest.json", JSON.stringify({ "file-entries": {} }));
   zip.file("metadata.json", JSON.stringify({ creator: "test" }));
+  if (nodifyMetadataJson) {
+    zip.file("nodify-metadata.json", nodifyMetadataJson);
+  }
   return zip.generateAsync({ type: "base64" });
 }
 
@@ -172,6 +212,55 @@ describe("exportToXmindZenContentJson", () => {
     expect(sheet.relationships?.[0].end1Id).toBe("child");
   });
 
+  it("keeps content.json XMind-compatible and writes Nodify metadata separately", () => {
+    map.nodes.child.dueAt = "2026-06-10T08:30:00.000Z";
+    map.nodes.child.attachments = [
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ];
+
+    const sheet = parseFirstSheet(exportToXmindZenContentJson(map));
+    const child = sheet.rootTopic?.children?.attached?.find((topic) => topic.id === "child");
+    const metadata = JSON.parse(exportToNodifyXmindMetadataJson(map) ?? "{}") as NodifyMetadataOutput;
+
+    expect(child?.extensions?.nodify).toBe(undefined);
+    expect(child?.href).toBe(undefined);
+    expect(metadata.nodes?.child?.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(metadata.nodes?.child?.attachments).toEqual([
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ]);
+  });
+
+  it("adds XMind relationship control points when a direct link crosses another topic", () => {
+    map.nodes.other = {
+      id: "other",
+      parentId: "root",
+      title: "Other",
+      x: 180,
+      y: 0,
+      children: [],
+    };
+    map.nodes.root.children.push("other");
+    map.edges = [{ id: "rel-1", fromId: "child", toId: "other", style: "dashed" }];
+
+    const sheet = parseFirstSheet(exportToXmindZenContentJson(map));
+    const controlPoint = sheet.relationships?.[0].controlPoints?.["0"];
+
+    expect(controlPoint).toBeDefined();
+    expect(Math.abs(controlPoint?.y ?? 0) > 1).toBe(true);
+  });
+
   it("writes a valid .xmind ZIP structure", async () => {
     await exportXmind(map, "Save test");
 
@@ -185,8 +274,43 @@ describe("exportToXmindZenContentJson", () => {
     expect(zip.file("metadata.json")).toBeDefined();
   });
 
+  it("writes Nodify metadata as a sidecar file in the .xmind ZIP", async () => {
+    map.nodes.child.dueAt = "2026-06-10T08:30:00.000Z";
+    map.nodes.child.attachments = [
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ];
+
+    await exportXmind(map, "Save test");
+
+    const zip = await JSZip.loadAsync(mockWrittenFiles[0].value, { base64: true });
+    const nodifyMetadataRaw = await zip.file("nodify-metadata.json")?.async("string");
+    const manifestRaw = await zip.file("manifest.json")?.async("string");
+    const nodifyMetadata = JSON.parse(nodifyMetadataRaw ?? "{}") as NodifyMetadataOutput;
+    const manifest = JSON.parse(manifestRaw ?? "{}") as { "file-entries"?: Record<string, unknown> };
+
+    expect(manifest["file-entries"]?.["nodify-metadata.json"]).toBeDefined();
+    expect(nodifyMetadata.nodes?.child?.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(nodifyMetadata.nodes?.child?.attachments).toHaveLength(1);
+  });
+
   it("preserves key properties in an XMind round trip", async () => {
     map.nodes.child.collapsed = true;
+    map.nodes.child.dueAt = "2026-06-10T08:30:00.000Z";
+    map.nodes.child.attachments = [
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ];
     map.nodes.other = {
       id: "other",
       parentId: "root",
@@ -198,12 +322,25 @@ describe("exportToXmindZenContentJson", () => {
     map.nodes.root.children.push("other");
     map.edges = [{ id: "rel-1", fromId: "child", toId: "other", style: "dashed" }];
 
-    const zipBase64 = await createZipFromContentJson(exportToXmindZenContentJson(map));
+    const zipBase64 = await createZipFromContentJson(
+      exportToXmindZenContentJson(map),
+      exportToNodifyXmindMetadataJson(map)
+    );
     const imported = await importFromXmind(zipBase64);
 
     expect(imported.nodes.child.title).toBe("Child");
     expect(imported.nodes.child.note).toBe("Child note");
     expect(imported.nodes.child.tags).toEqual(["planning"]);
+    expect(imported.nodes.child.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(imported.nodes.child.attachments).toEqual([
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "file:///brief.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+    ]);
     expect(imported.nodes.child.collapsed).toBe(true);
     expect(imported.edges).toHaveLength(1);
   });

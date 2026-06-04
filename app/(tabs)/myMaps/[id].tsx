@@ -6,7 +6,7 @@ import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 
 import MapScreen from "@/src/screens/MapScreen";
 import { getMap, saveMap } from "@/src/storage/mapsRepo";

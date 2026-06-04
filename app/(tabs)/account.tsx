@@ -6,7 +6,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 import { useAuth } from "@/src/auth/AuthProvider";
 import { getMyProfile, upsertMyUsername } from "@/src/storage/profileRepo";
 
@@ -102,8 +102,12 @@ export default function AccountScreen() {
   };
 
   const onLogout = async () => {
-    await signOut();
-    router.replace("/(auth)/login");
+    try {
+      await signOut();
+      router.replace("/(auth)/login");
+    } catch (error: unknown) {
+      Alert.alert(t("account.logoutError"), getErrorMessage(error, t("account.failedLogout")));
+    }
   };
 
   return (

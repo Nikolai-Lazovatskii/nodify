@@ -32,6 +32,7 @@ export const NODE_IMAGE_THUMB_SIZE = 18;
 export const INSERTION_SLOT_X_GAP = 230;
 export const INSERTION_SLOT_Y_GAP = 112;
 export const INSERTION_SLOT_MAX_DISTANCE = 360;
+const GEOMETRY_EPSILON = 0.000001;
 
 export function isImageAttachment(attachment: NodeAttachment | undefined) {
   if (!attachment) {
@@ -97,12 +98,41 @@ function isPointInRect(point: EdgePoint, rect: RouteRect) {
   return point.x > rect.left && point.x < rect.right && point.y > rect.top && point.y < rect.bottom;
 }
 
-function ccw(a: EdgePoint, b: EdgePoint, c: EdgePoint) {
-  return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+function orientation(a: EdgePoint, b: EdgePoint, c: EdgePoint) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function isPointOnSegment(point: EdgePoint, a: EdgePoint, b: EdgePoint) {
+  return (
+    Math.abs(orientation(a, b, point)) <= GEOMETRY_EPSILON &&
+    point.x >= Math.min(a.x, b.x) - GEOMETRY_EPSILON &&
+    point.x <= Math.max(a.x, b.x) + GEOMETRY_EPSILON &&
+    point.y >= Math.min(a.y, b.y) - GEOMETRY_EPSILON &&
+    point.y <= Math.max(a.y, b.y) + GEOMETRY_EPSILON
+  );
 }
 
 function segmentsIntersect(a: EdgePoint, b: EdgePoint, c: EdgePoint, d: EdgePoint) {
-  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+  const o1 = orientation(a, b, c);
+  const o2 = orientation(a, b, d);
+  const o3 = orientation(c, d, a);
+  const o4 = orientation(c, d, b);
+
+  if (
+    ((o1 > GEOMETRY_EPSILON && o2 < -GEOMETRY_EPSILON) ||
+      (o1 < -GEOMETRY_EPSILON && o2 > GEOMETRY_EPSILON)) &&
+    ((o3 > GEOMETRY_EPSILON && o4 < -GEOMETRY_EPSILON) ||
+      (o3 < -GEOMETRY_EPSILON && o4 > GEOMETRY_EPSILON))
+  ) {
+    return true;
+  }
+
+  return (
+    isPointOnSegment(c, a, b) ||
+    isPointOnSegment(d, a, b) ||
+    isPointOnSegment(a, c, d) ||
+    isPointOnSegment(b, c, d)
+  );
 }
 
 function samePoint(a: EdgePoint, b: EdgePoint) {
@@ -129,6 +159,23 @@ function segmentIntersectsRect(a: EdgePoint, b: EdgePoint, rect: RouteRect) {
 
 function isSegmentClear(a: EdgePoint, b: EdgePoint, obstacles: RouteRect[]) {
   return !obstacles.some((rect) => segmentIntersectsRect(a, b, rect));
+}
+
+function routeIsClear(points: EdgePoint[], obstacles: RouteRect[]) {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (!isSegmentClear(points[index], points[index + 1], obstacles)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function routeLength(points: EdgePoint[]) {
+  return points.slice(0, -1).reduce((sum, point, index) => {
+    const next = points[index + 1];
+    return sum + Math.abs(next.x - point.x) + Math.abs(next.y - point.y);
+  }, 0);
 }
 
 function simplifyRoute(points: EdgePoint[]) {
@@ -161,6 +208,56 @@ function simplifyRoute(points: EdgePoint[]) {
   return simplified;
 }
 
+function findOuterDetour(
+  from: EdgePoint,
+  to: EdgePoint,
+  obstacles: RouteRect[],
+  routePadding: number,
+  laneSeed: number
+) {
+  if (obstacles.length === 0) {
+    return null;
+  }
+
+  const laneOffset = Math.abs(((laneSeed % 9) - 4) * 18);
+  const outerPadding = routePadding * 8 + laneOffset;
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+
+  for (const rect of obstacles) {
+    left = Math.min(left, rect.left);
+    right = Math.max(right, rect.right);
+    top = Math.min(top, rect.top);
+    bottom = Math.max(bottom, rect.bottom);
+  }
+
+  const outerXs = [left - outerPadding, right + outerPadding];
+  const outerYs = [top - outerPadding, bottom + outerPadding];
+  const candidates: EdgePoint[][] = [];
+
+  for (const y of outerYs) {
+    candidates.push([from, { x: from.x, y }, { x: to.x, y }, to]);
+  }
+
+  for (const x of outerXs) {
+    candidates.push([from, { x, y: from.y }, { x, y: to.y }, to]);
+  }
+
+  for (const x of outerXs) {
+    for (const y of outerYs) {
+      candidates.push([from, { x, y: from.y }, { x, y }, { x: to.x, y }, to]);
+      candidates.push([from, { x: from.x, y }, { x, y }, { x, y: to.y }, to]);
+    }
+  }
+
+  return candidates
+    .map(simplifyRoute)
+    .filter((points) => routeIsClear(points, obstacles))
+    .sort((a, b) => routeLength(a) - routeLength(b))[0] ?? null;
+}
+
 export function routeEdgePoints(
   from: EdgePoint,
   to: EdgePoint,
@@ -183,6 +280,26 @@ export function routeEdgePoints(
     ys.add(rect.top - routePadding);
     ys.add(rect.bottom + routePadding);
     ys.add((rect.top + rect.bottom) / 2);
+  }
+
+  if (obstacles.length > 0) {
+    const outerPadding = routePadding * 4;
+    let left = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+
+    for (const rect of obstacles) {
+      left = Math.min(left, rect.left);
+      right = Math.max(right, rect.right);
+      top = Math.min(top, rect.top);
+      bottom = Math.max(bottom, rect.bottom);
+    }
+
+    xs.add(left - outerPadding);
+    xs.add(right + outerPadding);
+    ys.add(top - outerPadding);
+    ys.add(bottom + outerPadding);
   }
 
   const sortedXs = Array.from(xs).sort((a, b) => a - b);
@@ -271,6 +388,13 @@ export function routeEdgePoints(
   }
 
   if (!cameFrom.has(goalKey)) {
+    for (const paddingMultiplier of [1, 1.6, 2.4, 3.4]) {
+      const detour = findOuterDetour(from, to, obstacles, routePadding * paddingMultiplier, laneSeed);
+      if (detour) {
+        return detour;
+      }
+    }
+
     return [from, to];
   }
 

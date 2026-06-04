@@ -1,7 +1,3 @@
-/**
- * Súbor: src/storage/syncMaps.ts
- * Abstrakt: Rieši synchronizáciu máp medzi lokálnym úložiskom a cloudom vrátane konfliktov.
- */
 import { cacheCloudMap, deleteMap as deleteLocal, getLocalMap, listLocalMaps } from "@/src/storage/mapsRepo";
 import { cloudListMaps, cloudSoftDeleteMap, cloudUpsertMap, type CloudMapRow } from "@/src/storage/cloudMapsRepo";
 import type { MapMeta } from "@/src/types/map";

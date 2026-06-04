@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   FlatList,
   InteractionManager,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -22,7 +21,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/src/auth/AuthProvider";
-import { useTranslation } from "@/src/i18n/LanguagePreference";
+import { useTranslation } from "@/src/lang/LanguagePreference";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import { File } from "expo-file-system";
@@ -83,9 +82,8 @@ export default function MyMapsIndex() {
   const [pendingExportKind, setPendingExportKind] = useState<"mm" | "xmind" | null>(null);
 
   const exportVisible = exportId != null;
-  const horizontalInset = isLandscape
-    ? 16 + Math.max(insets.left, insets.right)
-    : 16;
+  const horizontalInsetLeft = isLandscape ? Math.max(insets.left, 0) + 6 : 16;
+  const horizontalInsetRight = isLandscape ? Math.max(insets.right, 0) + 6 : 16;
 
   const reload = useCallback(async (showLoading = true, runSyncAfter = true) => {
     if (showLoading) {
@@ -405,6 +403,24 @@ export default function MyMapsIndex() {
     });
   }, [importMm, importXmind, pendingImportKind]);
 
+  useEffect(() => {
+    if (importVisible || !pendingImportKind) {
+      return;
+    }
+
+    const timer = setTimeout(runPendingImport, 120);
+    return () => clearTimeout(timer);
+  }, [importVisible, pendingImportKind, runPendingImport]);
+
+  useEffect(() => {
+    if (exportVisible || !pendingExportId || !pendingExportKind) {
+      return;
+    }
+
+    const timer = setTimeout(runPendingExport, 120);
+    return () => clearTimeout(timer);
+  }, [exportVisible, pendingExportId, pendingExportKind, runPendingExport]);
+
   return (
     <View style={[s.screen, isDark && s.screenDark]}>
       <View
@@ -413,8 +429,8 @@ export default function MyMapsIndex() {
           isDark && s.headerDark,
           {
             paddingTop: headerPadTop,
-            paddingLeft: horizontalInset,
-            paddingRight: horizontalInset,
+            paddingLeft: horizontalInsetLeft,
+            paddingRight: horizontalInsetRight,
           },
         ]}
       >
@@ -448,9 +464,9 @@ export default function MyMapsIndex() {
           s.listContent,
           isLandscape && s.listContentLandscape,
           {
-            paddingLeft: horizontalInset,
-            paddingRight: horizontalInset,
-            paddingBottom: Math.max(insets.bottom, 24),
+            paddingLeft: horizontalInsetLeft,
+            paddingRight: horizontalInsetRight,
+            paddingBottom: isLandscape ? Math.max(insets.bottom, 12) + 86 : Math.max(insets.bottom, 24),
           },
         ]}
         data={sortedItems}
@@ -577,155 +593,119 @@ export default function MyMapsIndex() {
         </View>
       ) : null}
 
-      <Modal
-        visible={importVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setImportVisible(false)}
-        onDismiss={() => {
-          runPendingImport();
-        }}
-      >
-        <Pressable style={sheet.backdrop} onPress={() => setImportVisible(false)} />
+      {importVisible ? (
+        <View style={sheet.overlay}>
+          <Pressable style={sheet.backdrop} onPress={() => setImportVisible(false)} />
 
-        <View style={[sheet.panel, isDark && sheet.panelDark]}>
-          <Text style={[sheet.title, isDark && sheet.titleDark]}>{t("maps.importFormat")}</Text>
+          <View style={[sheet.panel, isDark && sheet.panelDark]}>
+            <Text style={[sheet.title, isDark && sheet.titleDark]}>{t("maps.importFormat")}</Text>
 
-          <Pressable
-            style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
-            onPress={() => {
-              setPendingImportKind("mm");
-              setImportVisible(false);
-
-              if (Platform.OS !== "ios") {
-                setTimeout(() => {
-                  runPendingImport();
-                }, 200);
-              }
-            }}
-          >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.freeMind")}</Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
-            onPress={() => {
-              setPendingImportKind("xmind");
-              setImportVisible(false);
-
-              if (Platform.OS !== "ios") {
-                setTimeout(() => {
-                  runPendingImport();
-                }, 200);
-              }
-            }}
-          >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.xmind")}</Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              sheet.option,
-              sheet.cancel,
-              isDark && sheet.cancelDark,
-              pressed && sheet.pressed,
-            ]}
-            onPress={() => setImportVisible(false)}
-          >
-            <Text
-              style={[
-                sheet.optionText,
-                isDark && sheet.optionTextDark,
-                sheet.cancelText,
-                isDark && sheet.cancelTextDark,
-              ]}
+            <Pressable
+              style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
+              onPress={() => {
+                setPendingImportKind("mm");
+                setImportVisible(false);
+              }}
             >
-              {t("common.cancel")}
-            </Text>
-          </Pressable>
+              <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.freeMind")}</Text>
+            </Pressable>
 
-          <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
-        </View>
-      </Modal>
-
-      <Modal
-        visible={exportVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setExportId(null)}
-        onDismiss={() => {
-          runPendingExport();
-        }}
-      >
-        <Pressable style={sheet.backdrop} onPress={() => setExportId(null)} />
-
-        <View style={[sheet.panel, isDark && sheet.panelDark]}>
-          <Text style={[sheet.title, isDark && sheet.titleDark]}>{t("maps.exportFormat")}</Text>
-
-          <Pressable
-            style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
-            onPress={() => {
-              const id = exportId;
-              if (!id) return;
-
-              setPendingExportKind("mm");
-              setPendingExportId(id);
-              setExportId(null);
-
-              if (Platform.OS !== "ios") {
-                setTimeout(() => {
-                  runPendingExport();
-                }, 200);
-              }
-            }}
-          >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.freeMind")}</Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
-            onPress={() => {
-              const id = exportId;
-              if (!id) return;
-
-              setPendingExportKind("xmind");
-              setPendingExportId(id);
-              setExportId(null);
-
-              if (Platform.OS !== "ios") {
-                setTimeout(() => {
-                  runPendingExport();
-                }, 200);
-              }
-            }}
-          >
-            <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.xmind")}</Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              sheet.option,
-              sheet.cancel,
-              isDark && sheet.cancelDark,
-              pressed && sheet.pressed,
-            ]}
-            onPress={() => setExportId(null)}
-          >
-            <Text
-              style={[
-                sheet.optionText,
-                isDark && sheet.optionTextDark,
-                sheet.cancelText,
-                isDark && sheet.cancelTextDark,
-              ]}
+            <Pressable
+              style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
+              onPress={() => {
+                setPendingImportKind("xmind");
+                setImportVisible(false);
+              }}
             >
-              {t("common.cancel")}
-            </Text>
-          </Pressable>
+              <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.xmind")}</Text>
+            </Pressable>
 
-          <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
+            <Pressable
+              style={({ pressed }) => [
+                sheet.option,
+                sheet.cancel,
+                isDark && sheet.cancelDark,
+                pressed && sheet.pressed,
+              ]}
+              onPress={() => setImportVisible(false)}
+            >
+              <Text
+                style={[
+                  sheet.optionText,
+                  isDark && sheet.optionTextDark,
+                  sheet.cancelText,
+                  isDark && sheet.cancelTextDark,
+                ]}
+              >
+                {t("common.cancel")}
+              </Text>
+            </Pressable>
+
+            <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
+          </View>
         </View>
-      </Modal>
+      ) : null}
+
+      {exportVisible ? (
+        <View style={sheet.overlay}>
+          <Pressable style={sheet.backdrop} onPress={() => setExportId(null)} />
+
+          <View style={[sheet.panel, isDark && sheet.panelDark]}>
+            <Text style={[sheet.title, isDark && sheet.titleDark]}>{t("maps.exportFormat")}</Text>
+
+            <Pressable
+              style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
+              onPress={() => {
+                const id = exportId;
+                if (!id) return;
+
+                setPendingExportKind("mm");
+                setPendingExportId(id);
+                setExportId(null);
+              }}
+            >
+              <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.freeMind")}</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [sheet.option, isDark && sheet.optionDark, pressed && sheet.pressed]}
+              onPress={() => {
+                const id = exportId;
+                if (!id) return;
+
+                setPendingExportKind("xmind");
+                setPendingExportId(id);
+                setExportId(null);
+              }}
+            >
+              <Text style={[sheet.optionText, isDark && sheet.optionTextDark]}>{t("maps.xmind")}</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                sheet.option,
+                sheet.cancel,
+                isDark && sheet.cancelDark,
+                pressed && sheet.pressed,
+              ]}
+              onPress={() => setExportId(null)}
+            >
+              <Text
+                style={[
+                  sheet.optionText,
+                  isDark && sheet.optionTextDark,
+                  sheet.cancelText,
+                  isDark && sheet.cancelTextDark,
+                ]}
+              >
+                {t("common.cancel")}
+              </Text>
+            </Pressable>
+
+            <View style={{ height: Platform.OS === "ios" ? insets.bottom : 0 }} />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -963,6 +943,12 @@ const s = StyleSheet.create({
 });
 
 const sheet = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "flex-end",
+    zIndex: 80,
+    elevation: 80,
+  },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   panel: {
     padding: 14,

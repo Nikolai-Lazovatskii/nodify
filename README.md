@@ -157,7 +157,7 @@ Profil `production` generuje Android App Bundle (`.aab`), nie priamo inštalovat
 - `src/import/` - import FreeMind a XMind súborov
 - `src/export/` - export FreeMind a XMind súborov
 - `src/auth/` - autentifikácia a session stav
-- `src/i18n/` - jazykové preklady
+- `src/lang/` - jazykové preklady
 - `benchmarks/` - reprodukovateľné merania výkonu
 
 ## Verejné dátové typy
