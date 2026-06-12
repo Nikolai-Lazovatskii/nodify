@@ -4,13 +4,16 @@
  */
 import { RelationshipEdge } from "@/src/types/map";
 
+export const RELATIONSHIP_LINK_COLOR = "#2563eb";
+
 export const DEFAULT_RELATIONSHIP_EDGE: Pick<RelationshipEdge, "style" | "width" | "color"> = {
   style: "dashed",
   width: 2,
-  color: "#94a3b8",
+  color: RELATIONSHIP_LINK_COLOR,
 };
 
 export const EDGE_PALETTE = [
+  RELATIONSHIP_LINK_COLOR,
   "#38bdf8",
   "#22c55e",
   "#a855f7",

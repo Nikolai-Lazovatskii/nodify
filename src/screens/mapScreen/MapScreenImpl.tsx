@@ -33,6 +33,7 @@ import {
   EDGE_PALETTE,
   MAX_RENDERED_EDGES_PER_FRAME,
   PROGRESSIVE_RENDER_NODE_LIMIT,
+  RELATIONSHIP_LINK_COLOR,
   VIEWPORT_CULL_NODE_LIMIT,
 } from "./constants";
 import {
@@ -54,6 +55,7 @@ import {
   NODE_IMAGE_THUMB_SIZE,
   nearestRouteObstacles,
   routeEdgePoints,
+  routeSimpleEdgePoints,
   routeIntersectsRect,
   routeIntersectsRoute,
   type RouteRect,
@@ -394,72 +396,21 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     () => nodes.filter((node) => viditelneIdcka.has(node.id)),
     [nodes, viditelneIdcka]
   );
-  const podpisGeometrie = useMemo(() => {
-    return [...viditelneUzly]
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((node) => {
-        const attachmentCount = node.attachments?.length ?? 0;
-        const tagCount = node.tags?.length ?? 0;
-        return [
-          node.id,
-          node.x,
-          node.y,
-          node.size ?? "",
-          node.title,
-          node.note ? 1 : 0,
-          node.dueAt ?? "",
-          attachmentCount,
-          tagCount,
-          node.collapsed ? 1 : 0,
-          node.children.join(","),
-        ].join(":");
-      })
-      .join("|");
-  }, [viditelneUzly]);
   const velkaMapa = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
   const orezVyrezu = totalNodeCount > VIEWPORT_CULL_NODE_LIMIT;
-  const importRozlozenie =
-    map.importedFormat?.sourceFormat === "mm" || map.importedFormat?.sourceFormat === "xmind";
-  const mudreCesty = velkaMapa || importRozlozenie;
-  const podpisyVztahov = useMemo(() => {
-    return map.edges.map((edge, edgeIndex) => ({
-      id: edge.id,
-      signature: [
-        edgeIndex,
-        edge.id,
-        edge.fromId,
-        edge.toId,
-        edge.style ?? "",
-        edge.width ?? "",
-        mudreCesty ? 1 : 0,
-        podpisGeometrie,
-      ].join("|"),
-    }));
-  }, [map.edges, podpisGeometrie, mudreCesty]);
-  const prekazkyCiest = useMemo(
-    () => viditelneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 26)),
-    [map.rootId, viditelneUzly]
-  );
-  const stromoveCesty = useMemo<RouteColorRef[]>(() => {
-    const routes: RouteColorRef[] = [];
-
-    for (const parentNode of viditelneUzly) {
-      for (const childId of parentNode.children) {
-        const childNode = map.nodes[childId];
-        if (!childNode || !viditelneIdcka.has(childId)) {
-          continue;
-        }
-
-        routes.push({
-          id: `tree-${parentNode.id}-${childId}`,
-          points: getStructuredTreeEdgePoints(parentNode, childNode),
-          color: childNode.edgeToParent?.color ?? "#9ca3af",
-        });
-      }
+  const importRozlozenie = useMemo(() => {
+    if (map.importedFormat?.sourceFormat === "mm" || map.importedFormat?.sourceFormat === "xmind") {
+      return true;
     }
 
-    return routes;
-  }, [map.nodes, viditelneIdcka, viditelneUzly]);
+    return (
+      nodes.some((node) => !!node.vendor?.mm || !!node.vendor?.xmind) ||
+      map.edges.some((edge) => !!edge.vendor?.mm || !!edge.vendor?.xmind)
+    );
+  }, [map.edges, map.importedFormat?.sourceFormat, nodes]);
+  const mudreCesty = velkaMapa || importRozlozenie;
+  const smartRelationshipRoutes = !mudreCesty;
+  const svgNodeMode = velkaMapa || importRozlozenie;
   const kreslitObsah = !velkaMapa || bigM;
   const nacitavaVelka = velkaMapa && !bigV;
   const svetovyVyrez = useMemo(
@@ -532,6 +483,39 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     () => new Set(kresleneUzly.map((node) => node.id)),
     [kresleneUzly]
   );
+  const prekazkyCiest = useMemo(
+    () => smartRelationshipRoutes
+      ? kresleneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 26))
+      : [],
+    [map.rootId, kresleneUzly, smartRelationshipRoutes]
+  );
+  const jednoduchePrekazkyVztahov = useMemo(
+    () => smartRelationshipRoutes
+      ? []
+      : kresleneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 20)),
+    [map.rootId, kresleneUzly, smartRelationshipRoutes]
+  );
+  const verziaPrekazokCiest = useMemo(() => {
+    if (!smartRelationshipRoutes) {
+      return "direct";
+    }
+
+    let hash = 2166136261;
+
+    for (const node of kresleneUzly) {
+      for (let index = 0; index < node.id.length; index += 1) {
+        hash = Math.imul(hash ^ node.id.charCodeAt(index), 16777619);
+      }
+
+      hash = Math.imul(hash ^ Math.round(node.x), 16777619);
+      hash = Math.imul(hash ^ Math.round(node.y), 16777619);
+      hash = Math.imul(hash ^ Math.round(node.size ?? 0), 16777619);
+      hash = Math.imul(hash ^ node.children.length, 16777619);
+      hash = Math.imul(hash ^ (node.collapsed ? 1 : 0), 16777619);
+    }
+
+    return `${kresleneUzly.length}:${hash >>> 0}`;
+  }, [kresleneUzly, smartRelationshipRoutes]);
   useEffect(() => {
     setSr(true);
   }, [velkaMapa, map.id, svetovyVyrez.left, svetovyVyrez.right, svetovyVyrez.top, svetovyVyrez.bottom]);
@@ -755,6 +739,104 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
 
     return routes;
   }, [map.nodes, kresleneIdcka, kresleneUzly, sr]);
+  const stromHrany = useMemo(() => {
+    const refs: { id: string; parentNode: MindMapNode; childNode: MindMapNode }[] = [];
+
+    for (const parentNode of kresleneUzly) {
+      for (const childId of parentNode.children) {
+        if (refs.length >= MAX_RENDERED_EDGES_PER_FRAME) {
+          return refs;
+        }
+
+        const childNode = map.nodes[childId];
+        if (!childNode || !kresleneIdcka.has(childId)) {
+          continue;
+        }
+
+        refs.push({
+          id: `tree-${parentNode.id}-${childId}`,
+          parentNode,
+          childNode,
+        });
+      }
+    }
+
+    return refs;
+  }, [map.nodes, kresleneIdcka, kresleneUzly]);
+  const vztahHrany = useMemo(() => {
+    const relationshipLimit = velkaMapa
+      ? MAX_RENDERED_EDGES_PER_FRAME
+      : Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - stromHrany.length);
+    if (relationshipLimit === 0) {
+      return [];
+    }
+
+    const refs: RelationshipEdge[] = [];
+    for (const edge of map.edges) {
+      if (refs.length >= relationshipLimit) {
+        break;
+      }
+
+      if (kresleneIdcka.has(edge.fromId) && kresleneIdcka.has(edge.toId)) {
+        refs.push(edge);
+      }
+    }
+
+    return refs;
+  }, [map.edges, stromHrany.length, kresleneIdcka, velkaMapa]);
+  const jednoducheTrasyVztahov = useMemo(() => {
+    if (smartRelationshipRoutes) {
+      return {};
+    }
+
+    const routes: Record<string, RoutedEdge> = {};
+    vztahHrany.forEach((edge, edgeIndex) => {
+      const fromNode = map.nodes[edge.fromId];
+      const toNode = map.nodes[edge.toId];
+      if (!fromNode || !toNode) {
+        return;
+      }
+
+      const obstacles = jednoduchePrekazkyVztahov.filter(
+        (rect) => rect.id !== edge.fromId && rect.id !== edge.toId
+      );
+      routes[edge.id] = {
+        id: edge.id,
+        points: routeSimpleEdgePoints(fromNode, toNode, obstacles, edgeIndex + 17),
+      };
+    });
+
+    return routes;
+  }, [jednoduchePrekazkyVztahov, map.nodes, smartRelationshipRoutes, vztahHrany]);
+  const podpisyVztahov = useMemo(() => {
+    if (!smartRelationshipRoutes) {
+      return [];
+    }
+
+    return vztahHrany.map((edge, edgeIndex) => {
+      const fromNode = map.nodes[edge.fromId];
+      const toNode = map.nodes[edge.toId];
+
+      return {
+        id: edge.id,
+        signature: [
+          edgeIndex,
+          edge.id,
+          edge.fromId,
+          edge.toId,
+          fromNode?.x ?? "",
+          fromNode?.y ?? "",
+          toNode?.x ?? "",
+          toNode?.y ?? "",
+          edge.style ?? "",
+          edge.width ?? "",
+          edge.color ?? "",
+          mudreCesty ? 1 : 0,
+          verziaPrekazokCiest,
+        ].join("|"),
+      };
+    });
+  }, [map.nodes, mudreCesty, smartRelationshipRoutes, verziaPrekazokCiest, vztahHrany]);
   useEffect(() => {
     const cache = rrcr.current;
     const liveIds = new Set(podpisyVztahov.map((item) => item.id));
@@ -774,6 +856,14 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
         cache.signatures.set(item.id, item.signature);
         cache.dirty.add(item.id);
       }
+    }
+
+    if (!smartRelationshipRoutes) {
+      cache.routes.clear();
+      cache.signatures.clear();
+      cache.dirty.clear();
+      setRre((current) => (Object.keys(current).length === 0 ? current : {}));
+      return;
     }
 
     if (!sr || cache.dirty.size === 0) {
@@ -796,17 +886,17 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       }
 
       const nextRoutes = new Map(currentCache.routes);
-      const committedRoutes: CommittedRoute[] = stromoveCesty.map((route) => ({
-        id: route.id,
-        points: route.points,
+      const committedRoutes: CommittedRoute[] = stromHrany.map(({ id, parentNode, childNode }) => ({
+        id,
+        points: routedTreeEdges[id]?.points ?? getStructuredTreeEdgePoints(parentNode, childNode),
       }));
 
-      map.edges.forEach((edge, edgeIndex) => {
+      vztahHrany.forEach((edge, edgeIndex) => {
         const fromNode = map.nodes[edge.fromId];
         const toNode = map.nodes[edge.toId];
         const existingRoute = nextRoutes.get(edge.id);
 
-        if (!fromNode || !toNode || !viditelneIdcka.has(edge.fromId) || !viditelneIdcka.has(edge.toId)) {
+        if (!fromNode || !toNode || !kresleneIdcka.has(edge.fromId) || !kresleneIdcka.has(edge.toId)) {
           nextRoutes.delete(edge.id);
           currentCache.dirty.delete(edge.id);
           return;
@@ -848,58 +938,21 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     };
   }, [
     chooseEdgeRoute,
-    map.edges,
+    kresleneIdcka,
     map.nodes,
     podpisyVztahov,
     prekazkyCiest,
-    stromoveCesty,
+    routedTreeEdges,
+    smartRelationshipRoutes,
     sr,
-    viditelneIdcka,
+    stromHrany,
+    vztahHrany,
   ]);
-  const stromHrany = useMemo(() => {
-    const refs: { id: string; parentNode: MindMapNode; childNode: MindMapNode }[] = [];
-
-    for (const parentNode of kresleneUzly) {
-      for (const childId of parentNode.children) {
-        if (refs.length >= MAX_RENDERED_EDGES_PER_FRAME) {
-          return refs;
-        }
-
-        const childNode = map.nodes[childId];
-        if (!childNode || !kresleneIdcka.has(childId)) {
-          continue;
-        }
-
-        refs.push({
-          id: `tree-${parentNode.id}-${childId}`,
-          parentNode,
-          childNode,
-        });
-      }
-    }
-
-    return refs;
-  }, [map.nodes, kresleneIdcka, kresleneUzly]);
-  const vztahHrany = useMemo(() => {
-    const remainingSlots = Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - stromHrany.length);
-    if (remainingSlots === 0) {
-      return [];
-    }
-
-    const refs: RelationshipEdge[] = [];
-    for (const edge of map.edges) {
-      if (refs.length >= remainingSlots) {
-        break;
-      }
-
-      if (kresleneIdcka.has(edge.fromId) && kresleneIdcka.has(edge.toId)) {
-        refs.push(edge);
-      }
-    }
-
-    return refs;
-  }, [map.edges, stromHrany.length, kresleneIdcka]);
   const farbyVztahov = useMemo(() => {
+    if (!smartRelationshipRoutes) {
+      return {};
+    }
+
     const treeRoutes: RouteColorRef[] = stromHrany
       .map(({ id, parentNode, childNode }) => ({
         id,
@@ -922,7 +975,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       })
       .filter((route): route is RouteColorRef => !!route);
     return buildRelationshipDisplayColors(treeRoutes, relationshipRoutes, EDGE_PALETTE);
-  }, [vztahHrany, stromHrany, rre, routedTreeEdges]);
+  }, [vztahHrany, stromHrany, rre, routedTreeEdges, smartRelationshipRoutes]);
   const postupMapy = velkaMapa
     ? bigV ? 100 : bigM ? 90 : 55
     : 100;
@@ -934,39 +987,39 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       return [];
     }
 
-    return nodes
-      .map((node) => {
-        const fields = [
-          node.title,
-          node.note,
-          node.dueAt,
-          ...(node.tags ?? []),
-          ...(node.attachments ?? []).map((attachment) => attachment.name),
-        ];
-        const haystack = normalizeSearchValue(fields.join(" "));
-        if (!haystack.includes(query)) {
-          return null;
-        }
+    const results: { node: MindMapNode; subtitle: string }[] = [];
 
-        const tagMatch = (node.tags ?? []).some((tag) => normalizeSearchValue(tag).includes(query));
-        const noteMatch = normalizeSearchValue(node.note).includes(query);
-        const hidden = !viditelneIdcka.has(node.id);
+    for (const node of nodes) {
+      const attachmentNames = (node.attachments ?? []).map((attachment) => attachment.name);
+      const fields = [node.title, node.note, node.dueAt, ...(node.tags ?? []), ...attachmentNames];
+      const haystack = normalizeSearchValue(fields.join(" "));
+      if (!haystack.includes(query)) {
+        continue;
+      }
 
-        return {
-          node,
-          subtitle: tagMatch
-            ? `${t("map.tagMatch")}${hidden ? ` ${t("map.hiddenCollapsed")}` : ""}`
-            : noteMatch
-              ? `${t("map.noteMatch")}${hidden ? ` ${t("map.hiddenCollapsed")}` : ""}`
-              : node.collapsed
-                ? `${t("map.titleMatch")} ${t("map.collapsed")}`
-                : hidden
-                  ? `${t("map.titleMatch")} ${t("map.hiddenCollapsed")}`
-                  : t("map.titleMatch"),
-        };
-      })
-      .filter(Boolean)
-      .slice(0, 8) as { node: MindMapNode; subtitle: string }[];
+      const tagMatch = (node.tags ?? []).some((tag) => normalizeSearchValue(tag).includes(query));
+      const noteMatch = normalizeSearchValue(node.note).includes(query);
+      const hidden = !viditelneIdcka.has(node.id);
+
+      results.push({
+        node,
+        subtitle: tagMatch
+          ? `${t("map.tagMatch")}${hidden ? ` ${t("map.hiddenCollapsed")}` : ""}`
+          : noteMatch
+            ? `${t("map.noteMatch")}${hidden ? ` ${t("map.hiddenCollapsed")}` : ""}`
+            : node.collapsed
+              ? `${t("map.titleMatch")} ${t("map.collapsed")}`
+              : hidden
+                ? `${t("map.titleMatch")} ${t("map.hiddenCollapsed")}`
+                : t("map.titleMatch"),
+      });
+
+      if (results.length >= 8) {
+        break;
+      }
+    }
+
+    return results;
   }, [nodes, q, t, viditelneIdcka]);
   const selectedNode = sid ? map.nodes[sid] ?? null : null;
   const selectedEdge = seid ? map.edges.find((edge) => edge.id === seid) ?? null : null;
@@ -1005,7 +1058,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   ]);
 
   useEffect(() => {
-    if (!velkaMapa || !bigV || didAutoFitMapIdRef.current === map.id) {
+    if (!svgNodeMode || (velkaMapa && !bigV) || didAutoFitMapIdRef.current === map.id) {
       return;
     }
 
@@ -1041,6 +1094,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     mapBounds.centerY,
     mapBounds.height,
     mapBounds.width,
+    svgNodeMode,
     worldToSurfaceX,
     worldToSurfaceY,
   ]);
@@ -1857,6 +1911,64 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     );
   };
 
+  const renderLargeNodeHitbox = (node: MindMapNode) => {
+    const isRootNode = node.id === map.rootId;
+    const bounds = getNodeRenderBounds(node, isRootNode);
+    const scaleX = SURFACE_W / Math.max(1, WORLD_W);
+    const scaleY = SURFACE_H / Math.max(1, WORLD_H);
+    const centerX = SURFACE_W / 2 + worldToSurfaceX(node.x);
+    const centerY = SURFACE_H / 2 + worldToSurfaceY(node.y);
+    const minHitSize = Math.max(32, Math.min(72, 44 / Math.max(0.35, z || 1)));
+    const width = Math.max(bounds.width * scaleX, minHitSize);
+    const height = Math.max(bounds.height * scaleY, minHitSize);
+    const selected = node.id === sid;
+
+    const handlePress = () => {
+      if (cpm) {
+        handleSelectChangeParentTarget(node.id);
+        return;
+      }
+
+      if (lm) {
+        handleSelectLinkTarget(node.id);
+        return;
+      }
+
+      handleSelectNode(node.id);
+    };
+
+    const handleLongPress = () => {
+      if (lm || cpm) {
+        return;
+      }
+
+      handleStartReposition(node.id);
+    };
+
+    return (
+      <Pressable
+        key={`hitbox-${node.id}`}
+        collapsable={false}
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={260}
+        hitSlop={8}
+        style={({ pressed }) => [
+          {
+            position: "absolute",
+            left: centerX - width / 2,
+            top: centerY - height / 2,
+            width,
+            height,
+            borderRadius: Math.min(width, height) / 2,
+            zIndex: selected ? 30 : 20,
+            backgroundColor: pressed ? "rgba(2,132,199,0.08)" : "transparent",
+          },
+        ]}
+      />
+    );
+  };
+
   return (
     <View
       style={[
@@ -1876,7 +1988,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             ref={canvasRef}
             key={`canvas:${map.id}:${canvasKey}`}
             enabled={!rpId}
-            minScale={velkaMapa ? 0.12 : 0.25}
+            minScale={svgNodeMode ? 0.12 : 0.25}
             maxScale={1}
             onScaleChange={setZ}
             onDoubleTap={resetViewToRoot}
@@ -1886,8 +1998,8 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
             onZoomGestureEnd={handleZoomGestureEnd}
             onTransformChange={setCt}
             notifyTransformDuringGesture
-            transformNotifyIntervalMs={velkaMapa ? 180 : 80}
-            notifyScaleDuringGesture={!velkaMapa}
+            transformNotifyIntervalMs={svgNodeMode ? 180 : 80}
+            notifyScaleDuringGesture={!svgNodeMode}
             contentWidth={SURFACE_W}
             contentHeight={SURFACE_H}
           >
@@ -1968,10 +2080,12 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                 {kreslitObsah ? vztahHrany.map((edge) => {
                   const fromNode = map.nodes[edge.fromId];
                   const toNode = map.nodes[edge.toId];
-                  const points = rre[edge.id]?.points;
-                  if (!fromNode || !toNode || !points) {
+                  if (!fromNode || !toNode) {
                     return null;
                   }
+                  const points = smartRelationshipRoutes
+                    ? rre[edge.id]?.points ?? [fromNode, toNode]
+                    : jednoducheTrasyVztahov[edge.id]?.points ?? [fromNode, toNode];
 
                   return (
                     <EdgeView
@@ -1981,19 +2095,29 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
                       points={points}
                       edgeStyle={edge.style ?? "dashed"}
                       width={edge.width ?? 2}
-                      color={farbyVztahov[edge.id] ?? edge.color ?? "#94a3b8"}
+                      color={
+                        smartRelationshipRoutes
+                          ? farbyVztahov[edge.id] ?? edge.color ?? "#94a3b8"
+                          : RELATIONSHIP_LINK_COLOR
+                      }
                       selected={seid === edge.id}
-                      onPress={velkaMapa ? undefined : () => handleSelectRelationshipEdge(edge.id)}
-                      onLongPress={velkaMapa ? undefined : () => handleLongPressRelationshipEdge(edge.id)}
-                      hitSlopWidth={velkaMapa ? 0 : 20}
+                      onPress={svgNodeMode ? undefined : () => handleSelectRelationshipEdge(edge.id)}
+                      onLongPress={svgNodeMode ? undefined : () => handleLongPressRelationshipEdge(edge.id)}
+                      hitSlopWidth={svgNodeMode ? 0 : 20}
                     />
                   );
                 }) : null}
 
-                {kreslitObsah && velkaMapa ? kresleneUzly.map(renderSvgNode) : null}
+                {kreslitObsah && svgNodeMode ? kresleneUzly.map(renderSvgNode) : null}
               </Svg>
 
-              {kreslitObsah && !velkaMapa ? (
+              {kreslitObsah && svgNodeMode && !rpId ? (
+                <View style={{ position: "absolute", top: 0, left: 0, width: SURFACE_W, height: SURFACE_H }} pointerEvents="box-none">
+                  {kresleneUzly.map(renderLargeNodeHitbox)}
+                </View>
+              ) : null}
+
+              {kreslitObsah && !svgNodeMode ? (
                 <View style={{ position: "absolute", top: 0, left: 0, width: SURFACE_W, height: SURFACE_H }} pointerEvents="box-none">
                   {kresleneUzly.map((node) => (
                     <EditableNodeView

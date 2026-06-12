@@ -415,6 +415,83 @@ export function routeEdgePoints(
   return simplifyRoute(route.reverse());
 }
 
+export function routeSimpleEdgePoints(
+  from: EdgePoint,
+  to: EdgePoint,
+  obstacles: RouteRect[],
+  laneSeed = 0
+): EdgePoint[] {
+  const directRoute = [from, to];
+  if (routeIsClear(directRoute, obstacles)) {
+    return directRoute;
+  }
+
+  const midX = (from.x + to.x) / 2;
+  const midY = (from.y + to.y) / 2;
+  const laneSkew = ((laneSeed % 5) - 2) * 14;
+  const routePadding = 34 + Math.abs(laneSkew);
+  const distanceToMid = (rect: RouteRect) => {
+    const rectMidX = (rect.left + rect.right) / 2;
+    const rectMidY = (rect.top + rect.bottom) / 2;
+    return Math.abs(rectMidX - midX) + Math.abs(rectMidY - midY);
+  };
+  const blockingObstacles = obstacles
+    .filter((rect) => routeIntersectsRect(directRoute, rect))
+    .sort((a, b) => distanceToMid(a) - distanceToMid(b))
+    .slice(0, 8);
+  const laneObstacles = blockingObstacles.length > 0
+    ? blockingObstacles
+    : [...obstacles].sort((a, b) => distanceToMid(a) - distanceToMid(b)).slice(0, 6);
+  const candidates: EdgePoint[][] = [];
+  const addCandidate = (points: EdgePoint[]) => {
+    candidates.push(simplifyRoute(points));
+  };
+
+  addCandidate([from, { x: midX + laneSkew, y: from.y }, { x: midX + laneSkew, y: to.y }, to]);
+  addCandidate([from, { x: from.x, y: midY + laneSkew }, { x: to.x, y: midY + laneSkew }, to]);
+
+  for (const rect of laneObstacles) {
+    const topLane = rect.top - routePadding;
+    const bottomLane = rect.bottom + routePadding;
+    const leftLane = rect.left - routePadding;
+    const rightLane = rect.right + routePadding;
+
+    addCandidate([from, { x: from.x, y: topLane }, { x: to.x, y: topLane }, to]);
+    addCandidate([from, { x: from.x, y: bottomLane }, { x: to.x, y: bottomLane }, to]);
+    addCandidate([from, { x: leftLane, y: from.y }, { x: leftLane, y: to.y }, to]);
+    addCandidate([from, { x: rightLane, y: from.y }, { x: rightLane, y: to.y }, to]);
+  }
+
+  if (laneObstacles.length > 0) {
+    const left = Math.min(...laneObstacles.map((rect) => rect.left));
+    const right = Math.max(...laneObstacles.map((rect) => rect.right));
+    const top = Math.min(...laneObstacles.map((rect) => rect.top));
+    const bottom = Math.max(...laneObstacles.map((rect) => rect.bottom));
+    const topLane = top - routePadding * 1.4;
+    const bottomLane = bottom + routePadding * 1.4;
+    const leftLane = left - routePadding * 1.4;
+    const rightLane = right + routePadding * 1.4;
+
+    addCandidate([from, { x: from.x, y: topLane }, { x: to.x, y: topLane }, to]);
+    addCandidate([from, { x: from.x, y: bottomLane }, { x: to.x, y: bottomLane }, to]);
+    addCandidate([from, { x: leftLane, y: from.y }, { x: leftLane, y: to.y }, to]);
+    addCandidate([from, { x: rightLane, y: from.y }, { x: rightLane, y: to.y }, to]);
+  }
+
+  const clearCandidate = candidates
+    .filter((points) => points.length >= 2 && routeIsClear(points, obstacles))
+    .sort((a, b) => {
+      const aScore = routeLength(a) + Math.max(0, a.length - 2) * 42;
+      const bScore = routeLength(b) + Math.max(0, b.length - 2) * 42;
+      return aScore - bScore;
+    })[0];
+  if (clearCandidate) {
+    return clearCandidate;
+  }
+
+  return findOuterDetour(from, to, obstacles, routePadding, laneSeed) ?? directRoute;
+}
+
 export function routeIntersectsRect(points: EdgePoint[], rect: RouteRect) {
   for (let index = 0; index < points.length - 1; index += 1) {
     if (segmentIntersectsRect(points[index], points[index + 1], rect)) {

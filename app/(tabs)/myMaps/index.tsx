@@ -55,7 +55,6 @@ export default function MyMapsIndex() {
     user,
     loading: authLoading,
     syncing,
-    isOnline,
     pendingSyncCount,
     lastSyncAt,
     syncNow,
@@ -136,7 +135,7 @@ export default function MyMapsIndex() {
       return;
     }
 
-    void reload(false);
+    void reload(false, false);
     setSyncToastVisible(true);
     const timer = setTimeout(() => {
       setSyncToastVisible(false);
@@ -348,18 +347,19 @@ export default function MyMapsIndex() {
     ? pendingSyncCount > 0 || sortedItems.some((item) => item.pendingSyncAt != null)
     : false;
   const syncPending = syncing || listSyncing;
+  const cloudUnavailable = offline;
   const syncBadgeIcon = syncPending
     ? "sync"
     : hasPendingSync
       ? "cloud-upload"
-      : offline || !isOnline
+      : cloudUnavailable
         ? "cloud-off"
         : "cloud-done";
   const syncBadgeColor = syncPending
     ? "#0284c7"
     : hasPendingSync
       ? "#0f766e"
-      : offline || !isOnline
+      : cloudUnavailable
         ? "#b45309"
         : "#0369a1";
 

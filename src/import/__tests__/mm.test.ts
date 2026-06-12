@@ -81,6 +81,23 @@ describe("importFromMm", () => {
     expect(map.nodes.child.tags).toEqual(["planning", "mobile"]);
   });
 
+  it("imports node richcontent images without parsing embedded HTML as map nodes", async () => {
+    const xml = `<?xml version="1.0"?>
+<map version="1.0.1">
+  <node ID="root" TEXT="Root">
+    <node ID="image-node">
+      <richcontent TYPE="NODE"><html><body><img src="picture.jpeg" /><node ID="fake" TEXT="Fake" /></body></html></richcontent>
+    </node>
+  </node>
+</map>`;
+
+    const map = await importFromMm(xml);
+
+    expect(Object.keys(map.nodes)).toHaveLength(2);
+    expect(map.nodes["image-node"].title).toBe("picture.jpeg");
+    expect(map.nodes["image-node"].attachments?.[0].uri).toBe("picture.jpeg");
+  });
+
   it("keeps literal angle brackets in notes instead of treating them as HTML", async () => {
     const xml = `<?xml version="1.0"?>
 <map version="1.0.1">

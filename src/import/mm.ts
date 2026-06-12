@@ -7,6 +7,10 @@ import { MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } fro
 type ParsedXmlNode = {
   attrs: Record<string, string>;
   children: ParsedXmlNode[];
+  richContentNode?: {
+    imageSrc?: string;
+    text?: string;
+  };
   note?: string;
   tags?: string[];
   edgeAttrs?: Record<string, string>;
@@ -89,6 +93,23 @@ function buildMmLinkAttachment(nodeId: string, attrs: Record<string, string>, fa
   };
 }
 
+function buildMmRichContentImageAttachment(
+  nodeId: string,
+  richContentNode: ParsedXmlNode["richContentNode"],
+  fallbackName: string
+): NodeAttachment | undefined {
+  const imageSrc = richContentNode?.imageSrc?.trim();
+  if (!imageSrc) {
+    return undefined;
+  }
+
+  return {
+    id: `mm_image_${nodeId}`,
+    name: getAttachmentNameFromLink(imageSrc, fallbackName),
+    uri: imageSrc,
+  };
+}
+
 function decodeHtmlToText(value: string): string {
   return decodeXmlText(value
     .replace(/<br\s*\/?>/gi, "\n")
@@ -100,6 +121,12 @@ function decodeHtmlToText(value: string): string {
     .replace(/\r\n/g, "\n")
     .replace(/\u00a0/g, " ")
     .trim();
+}
+
+function extractFirstImageSrc(value: string): string | undefined {
+  const match = value.match(/<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+  const src = decodeXmlText(match?.[1] ?? match?.[2]).trim();
+  return src || undefined;
 }
 
 function parseAttributes(input: string): Record<string, string> {
@@ -168,12 +195,26 @@ function parseMmTree(xml: string): ParsedXmlNode {
       const closeTag = "</richcontent>";
       const closeIndex = xml.toLowerCase().indexOf(closeTag, tagRegex.lastIndex);
 
-      if (closeIndex !== -1 && stack.length > 0 && (attrs.TYPE ?? "").toUpperCase() === "NOTE") {
+      if (closeIndex !== -1 && stack.length > 0) {
         const inner = xml.slice(tagRegex.lastIndex, closeIndex);
-        const note = decodeHtmlToText(inner);
-        if (note) {
-          stack[stack.length - 1].note = note;
+        const type = (attrs.TYPE ?? "").toUpperCase();
+
+        if (type === "NOTE") {
+          const note = decodeHtmlToText(inner);
+          if (note) {
+            stack[stack.length - 1].note = note;
+          }
+        } else if (type === "NODE") {
+          const imageSrc = extractFirstImageSrc(inner);
+          const text = decodeHtmlToText(inner);
+          if (imageSrc || text) {
+            stack[stack.length - 1].richContentNode = {
+              ...(imageSrc ? { imageSrc } : {}),
+              ...(text ? { text } : {}),
+            };
+          }
         }
+
         tagRegex.lastIndex = closeIndex + closeTag.length;
       }
 
@@ -289,8 +330,15 @@ function buildImportedNodes(
     typeof lineWidthSource === "string" ||
     typeof lineColorSource === "string";
 
-  const title = safeNodeTitle(source.attrs.TEXT, parentId ? "Imported node" : "Imported map");
-  const attachment = buildMmLinkAttachment(id, source.attrs, title);
+  const title = safeNodeTitle(
+    source.attrs.TEXT ?? source.richContentNode?.text,
+    source.richContentNode?.imageSrc
+      ? getAttachmentNameFromLink(source.richContentNode.imageSrc, "Image")
+      : parentId ? "Imported node" : "Imported map"
+  );
+  const linkAttachment = buildMmLinkAttachment(id, source.attrs, title);
+  const imageAttachment = buildMmRichContentImageAttachment(id, source.richContentNode, title);
+  const attachments = [linkAttachment, imageAttachment].filter((attachment): attachment is NodeAttachment => !!attachment);
 
   const node: MindMapNode = {
     id,
@@ -298,7 +346,7 @@ function buildImportedNodes(
     title,
     note: source.note?.trim() || undefined,
     tags: source.tags?.filter(Boolean)?.length ? Array.from(new Set(source.tags.filter(Boolean))) : undefined,
-    attachments: attachment ? [attachment] : undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
     x: 0,
     y: 0,
     children: [],
@@ -408,17 +456,29 @@ function estimateImportedNodeWidth(node: MindMapNode): number {
   return Math.min(320, titleWidth);
 }
 
-function estimateImportedSubtreeHeight(nodeId: string, nodes: Record<string, MindMapNode>): number {
+function estimateImportedSubtreeHeight(
+  nodeId: string,
+  nodes: Record<string, MindMapNode>,
+  cache: Map<string, number>
+): number {
+  const cached = cache.get(nodeId);
+  if (cached != null) {
+    return cached;
+  }
+
   const node = nodes[nodeId];
   if (!node || node.children.length === 0 || node.collapsed) {
+    cache.set(nodeId, 96);
     return 96;
   }
 
   const childrenHeight = node.children.reduce(
-    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes),
+    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes, cache),
     0
   );
-  return Math.max(112, childrenHeight);
+  const height = Math.max(112, childrenHeight);
+  cache.set(nodeId, height);
+  return height;
 }
 
 function layoutSubtree(
@@ -427,6 +487,7 @@ function layoutSubtree(
   sign: -1 | 1,
   depth: number,
   centerY: number,
+  heightCache: Map<string, number>,
   parentX = 0
 ): number {
   const node = nodes[nodeId];
@@ -437,7 +498,7 @@ function layoutSubtree(
   const attrs = mmNodeAttrs(node);
   const hGap = parseMmNumber(attrs.HGAP);
   const vShift = parseMmNumber(attrs.VSHIFT) ?? 0;
-  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes);
+  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes, heightCache);
   const xGap = Math.max(190, estimateImportedNodeWidth(node) + 76, hGap ? hGap + 130 : 0);
   node.x = parentX + sign * xGap;
   node.y = centerY + vShift;
@@ -448,9 +509,9 @@ function layoutSubtree(
 
   let cursorY = node.y - branchHeight / 2;
   for (const childId of node.children) {
-    const childHeight = estimateImportedSubtreeHeight(childId, nodes);
+    const childHeight = estimateImportedSubtreeHeight(childId, nodes, heightCache);
     const childCenterY = cursorY + childHeight / 2;
-    layoutSubtree(childId, nodes, sign, depth + 1, childCenterY, node.x);
+    layoutSubtree(childId, nodes, sign, depth + 1, childCenterY, heightCache, node.x);
     cursorY += childHeight;
   }
 
@@ -471,6 +532,7 @@ function layoutImportedMap(map: MindMap): MindMap {
     return map;
   }
 
+  const heightCache = new Map<string, number>();
   const rightSide: string[] = [];
   const leftSide: string[] = [];
 
@@ -493,21 +555,21 @@ function layoutImportedMap(map: MindMap): MindMap {
     }
   });
 
-  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
-  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
+  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes, heightCache), 0);
+  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes, heightCache), 0);
 
   let leftCursor = -totalLeftHeight / 2;
   let rightCursor = -totalRightHeight / 2;
 
   for (const childId of leftSide) {
-    const height = estimateImportedSubtreeHeight(childId, map.nodes);
-    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, root.x);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes, heightCache);
+    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, heightCache, root.x);
     leftCursor += height;
   }
 
   for (const childId of rightSide) {
-    const height = estimateImportedSubtreeHeight(childId, map.nodes);
-    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, root.x);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes, heightCache);
+    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, heightCache, root.x);
     rightCursor += height;
   }
 

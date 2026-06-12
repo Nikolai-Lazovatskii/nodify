@@ -12,6 +12,8 @@ export const ui = StyleSheet.create({
     right: 12,
     gap: 10,
     alignItems: "flex-start",
+    zIndex: 60,
+    elevation: 60,
   },
   topOverlayLandscape: {
     top: 8,

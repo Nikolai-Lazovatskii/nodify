@@ -10,6 +10,7 @@ import {
   routeEdgePoints,
   routeIntersectsRect,
   routeIntersectsRoute,
+  routeSimpleEdgePoints,
   routeSegmentRects,
   type RouteRect,
 } from "../routing";
@@ -152,6 +153,27 @@ describe("routeEdgePoints", () => {
 
     expect(route.length > 2).toBe(true);
     expectRouteAvoids(route, obstacles);
+    expectRouteEndpoints(route, from, to);
+  });
+});
+
+describe("routeSimpleEdgePoints", () => {
+  it("returns a direct path when there are no obstacles", () => {
+    const from: EdgePoint = { x: 0, y: 0 };
+    const to: EdgePoint = { x: 100, y: 40 };
+
+    expect(routeSimpleEdgePoints(from, to, [], 0)).toEqual([from, to]);
+  });
+
+  it("uses a lightweight detour around a blocking obstacle", () => {
+    const from: EdgePoint = { x: 0, y: 0 };
+    const to: EdgePoint = { x: 100, y: 0 };
+    const obstacle: RouteRect = { id: "block", left: 40, right: 60, top: -10, bottom: 10 };
+
+    const route = routeSimpleEdgePoints(from, to, [obstacle], 4);
+
+    expect(route.length > 2).toBe(true);
+    expect(routeIntersectsRect(route, obstacle)).toBe(false);
     expectRouteEndpoints(route, from, to);
   });
 });

@@ -943,17 +943,29 @@ function estimateImportedNodeWidth(node: MindMapNode): number {
   return Math.min(320, titleWidth);
 }
 
-function estimateImportedSubtreeHeight(nodeId: string, nodes: Record<string, MindMapNode>): number {
+function estimateImportedSubtreeHeight(
+  nodeId: string,
+  nodes: Record<string, MindMapNode>,
+  cache: Map<string, number>
+): number {
+  const cached = cache.get(nodeId);
+  if (cached != null) {
+    return cached;
+  }
+
   const node = nodes[nodeId];
   if (!node || node.children.length === 0 || node.collapsed) {
+    cache.set(nodeId, 96);
     return 96;
   }
 
   const childrenHeight = node.children.reduce(
-    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes),
+    (sum, childId) => sum + estimateImportedSubtreeHeight(childId, nodes, cache),
     0
   );
-  return Math.max(112, childrenHeight);
+  const height = Math.max(112, childrenHeight);
+  cache.set(nodeId, height);
+  return height;
 }
 
 function layoutSubtree(
@@ -962,6 +974,7 @@ function layoutSubtree(
   sign: -1 | 1,
   depth: number,
   centerY: number,
+  heightCache: Map<string, number>,
   parentX = 0
 ): number {
   const node = nodes[nodeId];
@@ -975,11 +988,11 @@ function layoutSubtree(
     if (importedPosition) {
       node.x = importedPosition.x;
       node.y = importedPosition.y;
-      return estimateImportedSubtreeHeight(nodeId, nodes);
+      return estimateImportedSubtreeHeight(nodeId, nodes, heightCache);
     }
   }
 
-  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes);
+  const branchHeight = estimateImportedSubtreeHeight(nodeId, nodes, heightCache);
   const xGap = Math.max(190, estimateImportedNodeWidth(node) + 76);
   node.x = parentX + sign * xGap;
   node.y = centerY;
@@ -990,8 +1003,8 @@ function layoutSubtree(
 
   let cursorY = node.y - branchHeight / 2;
   for (const childId of node.children) {
-    const childHeight = estimateImportedSubtreeHeight(childId, nodes);
-    layoutSubtree(childId, nodes, sign, depth + 1, cursorY + childHeight / 2, node.x);
+    const childHeight = estimateImportedSubtreeHeight(childId, nodes, heightCache);
+    layoutSubtree(childId, nodes, sign, depth + 1, cursorY + childHeight / 2, heightCache, node.x);
     cursorY += childHeight;
   }
 
@@ -1012,6 +1025,7 @@ function layoutImportedMap(map: MindMap): MindMap {
     return map;
   }
 
+  const heightCache = new Map<string, number>();
   const rightSide: string[] = [];
   const leftSide: string[] = [];
 
@@ -1023,21 +1037,21 @@ function layoutImportedMap(map: MindMap): MindMap {
     }
   });
 
-  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
-  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes), 0);
+  const totalLeftHeight = leftSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes, heightCache), 0);
+  const totalRightHeight = rightSide.reduce((sum, childId) => sum + estimateImportedSubtreeHeight(childId, map.nodes, heightCache), 0);
 
   let leftCursor = -totalLeftHeight / 2;
   let rightCursor = -totalRightHeight / 2;
 
   for (const childId of leftSide) {
-    const height = estimateImportedSubtreeHeight(childId, map.nodes);
-    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, root.x);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes, heightCache);
+    layoutSubtree(childId, map.nodes, -1, 1, leftCursor + height / 2, heightCache, root.x);
     leftCursor += height;
   }
 
   for (const childId of rightSide) {
-    const height = estimateImportedSubtreeHeight(childId, map.nodes);
-    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, root.x);
+    const height = estimateImportedSubtreeHeight(childId, map.nodes, heightCache);
+    layoutSubtree(childId, map.nodes, 1, 1, rightCursor + height / 2, heightCache, root.x);
     rightCursor += height;
   }
 
