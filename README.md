@@ -112,7 +112,7 @@ Pre vytvorenie inštalovateľného Android APK buildu sa používa EAS profil `p
 
 Aktuálny testovací APK build je dostupný na adrese:
 
-https://expo.dev/accounts/nicolasray/projects/Nodify/builds/956f2d2f-2d89-47ca-94ad-a5381a7f3fe2
+https://expo.dev/accounts/nicolasray/projects/Nodify/builds/7f9273ea-1811-4db2-a5d4-96c4798cd8a7
 
 Inštalovateľný `.apk` je priložený aj v elektronickej prílohe záverečnej práce v systéme AIS.
 
