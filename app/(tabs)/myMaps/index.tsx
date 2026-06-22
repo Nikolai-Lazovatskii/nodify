@@ -25,10 +25,8 @@ import { useTranslation } from "@/src/lang/LanguagePreference";
 import { MaterialIcons } from "@expo/vector-icons";
 
 import { File } from "expo-file-system";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 
-import { exportToMm } from "@/src/export/mm";
+import { exportMm } from "@/src/export/doExportMm";
 import { importFromMm } from "@/src/import/mm";
 import { importFromXmind } from "@/src/import/xmind";
 import {
@@ -221,35 +219,7 @@ export default function MyMapsIndex() {
         return;
       }
 
-      const xml = exportToMm(map);
-
-      const safeName = (map.title || "mind-map")
-        .replace(/[\\/:*?"<>|]/g, "-")
-        .trim()
-        .slice(0, 60);
-
-      const baseDir = FileSystem.documentDirectory;
-      if (!baseDir) {
-        Alert.alert(t("maps.exportFailed"), t("maps.fileSystemUnavailable"));
-        return;
-      }
-
-      const uri = `${baseDir}${safeName}-${id}.mm`;
-
-      await FileSystem.writeAsStringAsync(uri, xml, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "text/xml",
-          dialogTitle: t("maps.exportMindMap"),
-          UTI: "public.xml",
-        });
-      } else {
-        Alert.alert(t("maps.exportReady"), t("maps.savedTo", { uri }));
-      }
+      await exportMm(map, t("maps.exportMindMap"));
     } catch (error: unknown) {
       Alert.alert(t("maps.exportFailed"), getErrorMessage(error));
     }
@@ -362,6 +332,27 @@ export default function MyMapsIndex() {
       : cloudUnavailable
         ? "#b45309"
         : "#0369a1";
+  const syncStatusLabel = syncPending
+    ? t("maps.syncingShort")
+    : hasPendingSync
+      ? t("maps.pendingSync")
+      : cloudUnavailable
+        ? t("maps.offlineShort")
+        : t("maps.syncedShort");
+
+  const handleManualSync = useCallback(async () => {
+    if (!user || syncPending) {
+      return;
+    }
+
+    setListSyncing(true);
+    try {
+      await syncNow();
+      await reload(false, false);
+    } finally {
+      setListSyncing(false);
+    }
+  }, [reload, syncNow, syncPending, user]);
 
   const showSynchronizing = sortedItems.length === 0 && (authLoading || loading || syncing || listSyncing);
   const numColumns = isLandscape ? 2 : 1;
@@ -438,18 +429,32 @@ export default function MyMapsIndex() {
           <Text style={[s.headerTitle, isDark && s.headerTitleDark]}>{t("maps.title")}</Text>
           <View style={s.headerActions}>
             {user ? (
-              <View style={[
-                s.syncBadge,
-                isDark && s.syncBadgeDark,
-                hasPendingSync && s.syncBadgePending,
-                hasPendingSync && isDark && s.syncBadgePendingDark,
-              ]}>
-                <MaterialIcons
-                  name={syncBadgeIcon}
-                  size={16}
-                  color={syncBadgeColor}
-                />
-              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={syncStatusLabel}
+                disabled={syncPending}
+                onPress={handleManualSync}
+                style={({ pressed }) => [
+                  s.syncBadge,
+                  isDark && s.syncBadgeDark,
+                  hasPendingSync && s.syncBadgePending,
+                  hasPendingSync && isDark && s.syncBadgePendingDark,
+                  cloudUnavailable && s.syncBadgeOffline,
+                  cloudUnavailable && isDark && s.syncBadgeOfflineDark,
+                  pressed && s.pressedBtn,
+                  syncPending && s.syncBadgeDisabled,
+                ]}
+              >
+                {syncPending ? (
+                  <ActivityIndicator size="small" color={syncBadgeColor} />
+                ) : (
+                  <MaterialIcons
+                    name={syncBadgeIcon}
+                    size={16}
+                    color={syncBadgeColor}
+                  />
+                )}
+              </Pressable>
             ) : null}
             <Pressable onPress={() => setImportVisible(true)} style={({ pressed }) => [s.importButton, pressed && s.pressedBtn]}>
               <Text style={s.importButtonText}>{t("maps.import")}</Text>
@@ -480,6 +485,20 @@ export default function MyMapsIndex() {
             <View style={[s.offlineBanner, isDark && s.offlineBannerDark]}>
               <MaterialIcons name="cloud-off" size={17} color={isDark ? "#fbbf24" : "#b45309"} />
               <Text style={[s.offlineText, isDark && s.offlineTextDark]}>{t("maps.offlineLocalData")}</Text>
+              <Pressable
+                onPress={handleManualSync}
+                disabled={syncPending}
+                style={({ pressed }) => [
+                  s.retryButton,
+                  isDark && s.retryButtonDark,
+                  pressed && s.pressedBtn,
+                  syncPending && s.retryButtonDisabled,
+                ]}
+              >
+                <Text style={[s.retryButtonText, isDark && s.retryButtonTextDark]}>
+                  {syncPending ? "..." : t("maps.retrySync")}
+                </Text>
+              </Pressable>
             </View>
           ) : null
         }
@@ -498,6 +517,23 @@ export default function MyMapsIndex() {
         }
         renderItem={({ item }) => {
           const isPendingSync = item.pendingSyncAt != null;
+          const storageLabel = isPendingSync
+            ? t("maps.pending")
+            : item.storage === "cloud"
+              ? t("maps.cloud")
+              : user
+                ? t("maps.local")
+                : null;
+          const storageIcon = isPendingSync
+            ? "cloud-upload"
+            : item.storage === "cloud"
+              ? "cloud-done"
+              : "smartphone";
+          const storageIconColor = isPendingSync
+            ? isDark ? "#5eead4" : "#0f766e"
+            : item.storage === "cloud"
+              ? isDark ? "#7dd3fc" : "#0369a1"
+              : isDark ? "#cbd5e1" : "#64748b";
 
           return (
             <Pressable
@@ -538,18 +574,27 @@ export default function MyMapsIndex() {
                   {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ""}
                 </Text>
                 <View style={s.badgeRow}>
-                  {isPendingSync ? (
-                    <View style={[s.storageBadge, s.pendingStorageBadge, isDark && s.pendingStorageBadgeDark]}>
-                      <MaterialIcons name="cloud-upload" size={15} color={isDark ? "#5eead4" : "#0f766e"} />
-                    </View>
-                  ) : null}
-                  {item.storage === "cloud" ? (
-                    <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
-                      <MaterialIcons name="cloud-done" size={15} color={isDark ? "#7dd3fc" : "#0369a1"} />
-                    </View>
-                  ) : user ? (
-                    <View style={[s.storageBadge, isDark && s.storageBadgeDark]}>
-                      <MaterialIcons name="smartphone" size={15} color={isDark ? "#cbd5e1" : "#64748b"} />
+                  {storageLabel ? (
+                    <View
+                      style={[
+                        s.storageBadge,
+                        isDark && s.storageBadgeDark,
+                        isPendingSync && s.pendingStorageBadge,
+                        isPendingSync && isDark && s.pendingStorageBadgeDark,
+                      ]}
+                    >
+                      <MaterialIcons name={storageIcon} size={15} color={storageIconColor} />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          s.storageBadgeText,
+                          isDark && s.storageBadgeTextDark,
+                          isPendingSync && s.storageBadgeTextPending,
+                          isPendingSync && isDark && s.storageBadgeTextPendingDark,
+                        ]}
+                      >
+                        {storageLabel}
+                      </Text>
                     </View>
                   ) : null}
                 </View>
@@ -737,9 +782,10 @@ const s = StyleSheet.create({
     gap: 10,
   },
   syncBadge: {
-    width: 36,
+    width: 40,
     height: 36,
     borderRadius: 12,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(2,132,199,0.08)",
@@ -757,6 +803,17 @@ const s = StyleSheet.create({
   syncBadgePendingDark: {
     backgroundColor: "rgba(45,212,191,0.12)",
     borderColor: "rgba(94,234,212,0.24)",
+  },
+  syncBadgeOffline: {
+    backgroundColor: "rgba(245,158,11,0.10)",
+    borderColor: "rgba(245,158,11,0.24)",
+  },
+  syncBadgeOfflineDark: {
+    backgroundColor: "rgba(245,158,11,0.12)",
+    borderColor: "rgba(251,191,36,0.24)",
+  },
+  syncBadgeDisabled: {
+    opacity: 0.78,
   },
   importButton: {
     minWidth: 108,
@@ -799,6 +856,31 @@ const s = StyleSheet.create({
   offlineTextDark: {
     color: "#fbbf24",
   },
+  retryButton: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(180,83,9,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(180,83,9,0.24)",
+  },
+  retryButtonDark: {
+    backgroundColor: "rgba(251,191,36,0.12)",
+    borderColor: "rgba(251,191,36,0.24)",
+  },
+  retryButtonDisabled: {
+    opacity: 0.7,
+  },
+  retryButtonText: {
+    color: "#92400e",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  retryButtonTextDark: {
+    color: "#fbbf24",
+  },
   columns: { gap: 12 },
   card: {
     flex: 1,
@@ -818,7 +900,7 @@ const s = StyleSheet.create({
   pressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   cardTop: {
     flexDirection: "row",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
     marginBottom: 10,
@@ -849,11 +931,15 @@ const s = StyleSheet.create({
   meta: { fontSize: 12, color: "rgba(15,23,42,0.55)", fontWeight: "600" },
   metaDark: { color: "rgba(226,232,240,0.65)" },
   storageBadge: {
-    width: 28,
+    minWidth: 28,
+    maxWidth: 96,
     height: 28,
     borderRadius: 10,
+    paddingHorizontal: 8,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 5,
     backgroundColor: "rgba(2,132,199,0.08)",
     borderWidth: 1,
     borderColor: "rgba(2,132,199,0.12)",
@@ -874,6 +960,21 @@ const s = StyleSheet.create({
   pendingStorageBadgeDark: {
     backgroundColor: "rgba(45,212,191,0.12)",
     borderColor: "rgba(94,234,212,0.22)",
+  },
+  storageBadgeText: {
+    flexShrink: 1,
+    color: "#0369a1",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  storageBadgeTextDark: {
+    color: "#cbd5e1",
+  },
+  storageBadgeTextPending: {
+    color: "#0f766e",
+  },
+  storageBadgeTextPendingDark: {
+    color: "#5eead4",
   },
   actionsRow: { flexDirection: "row", gap: 10 },
   actionBtn: {

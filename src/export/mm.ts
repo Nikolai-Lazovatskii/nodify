@@ -2,8 +2,12 @@
  * Súbor: src/export/mm.ts
  * Abstrakt: Prevádza internú myšlienkovú mapu do XML formátu FreeMind.
  */
-import { MindMap, MindMapNode } from "../types/map";
+import { MindMap, MindMapNode, NodeAttachment } from "../types/map";
 import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
+
+const FREEMIND_EXPORT_VERSION = "1.0.1";
+const EXPORTED_DUE_LINE_PATTERN = /^Due:\s+\d{1,2}\.\d{1,2}\.\d{4}\s+\d{2}:\d{2}$/;
+const FREEMIND_IMAGE_WIDTH = 240;
 
 export function exportToMm(map: MindMap): string {
   const exportMap = layoutStructuredMap(map);
@@ -13,9 +17,8 @@ export function exportToMm(map: MindMap): string {
 
   const rawMapAttrs = exportMap.importedFormat?.vendor?.mm?.rawMapAttributes ?? {};
   const mapAttrs: Record<string, string> = { ...rawMapAttrs };
-  if (!("version" in mapAttrs) && !("VERSION" in mapAttrs)) {
-    mapAttrs.version = "1.0.1";
-  }
+  delete mapAttrs.VERSION;
+  mapAttrs.version = FREEMIND_EXPORT_VERSION;
 
   const lines: string[] = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -108,6 +111,94 @@ function serializeAttrs(attrs: Record<string, string | undefined>): string {
     .join(" ");
 }
 
+function formatVisibleDueAt(dueAt: string | undefined) {
+  const value = dueAt?.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const year = `${date.getFullYear()}`;
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `Due: ${day}.${month}.${year} ${hour}:${minute}`;
+}
+
+function stripVisibleExportMetadata(note: string) {
+  const lines = note.split(/\r?\n/);
+  const cleaned: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (EXPORTED_DUE_LINE_PATTERN.test(trimmed)) {
+      continue;
+    }
+
+    if (trimmed === "Attachments:") {
+      while (index + 1 < lines.length && lines[index + 1].trim().startsWith("- ")) {
+        index += 1;
+      }
+      continue;
+    }
+
+    cleaned.push(lines[index]);
+  }
+
+  return cleaned.join("\n").trim();
+}
+
+function visibleAttachmentLine(attachment: NodeAttachment) {
+  const name = attachment.name?.trim() || "Attachment";
+  const uri = attachment.uri?.trim() || "";
+  return uri ? `- ${name}: ${uri}` : `- ${name}`;
+}
+
+function isImageAttachment(attachment: NodeAttachment | undefined) {
+  if (!attachment) {
+    return false;
+  }
+
+  const mime = attachment.mimeType?.toLowerCase() ?? "";
+  if (mime.startsWith("image/")) {
+    return true;
+  }
+
+  const source = `${attachment.name ?? ""} ${attachment.uri ?? ""}`.toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|heic|heif)(?:$|[?#\s])/i.test(source);
+}
+
+function getNodeImageAttachments(node: MindMapNode) {
+  return (node.attachments ?? []).filter(isImageAttachment);
+}
+
+function buildVisibleNoteContent(node: MindMapNode) {
+  const dueLine = formatVisibleDueAt(node.dueAt);
+  const attachments = (node.attachments ?? []).filter((attachment) => attachment.uri?.trim() && !isImageAttachment(attachment));
+  const baseNote = stripVisibleExportMetadata(node.note ?? "");
+  const metadataLines: string[] = [];
+
+  if (dueLine) {
+    metadataLines.push(dueLine);
+  }
+
+  if (attachments.length > 0) {
+    metadataLines.push("Attachments:");
+    metadataLines.push(...attachments.map(visibleAttachmentLine));
+  }
+
+  if (baseNote && metadataLines.length > 0) {
+    return `${baseNote}\n\n${metadataLines.join("\n")}`;
+  }
+
+  return baseNote || metadataLines.join("\n");
+}
+
 function hasImportedPositionChanged(node: MindMapNode): boolean {
   const importedPosition = node.vendor?.mm?.importedPosition;
   if (!importedPosition) {
@@ -143,14 +234,19 @@ function applyManagedFreeMindPosition(
   delete attrs.VSHIFT;
 }
 
-function buildNodeAttrs(map: MindMap, node: MindMapNode): string {
+function buildNodeAttrs(map: MindMap, node: MindMapNode, usesRichContentNode: boolean): string {
   const rawAttrs = node.vendor?.mm?.rawAttributes ?? {};
   const primaryAttachment = node.attachments?.[0];
   const attrs: Record<string, string | undefined> = {
     ...rawAttrs,
-    TEXT: node.title ?? "",
     ID: node.id,
   };
+
+  if (usesRichContentNode) {
+    delete attrs.TEXT;
+  } else {
+    attrs.TEXT = node.title ?? "";
+  }
 
   if (primaryAttachment?.uri) {
     attrs.LINK = primaryAttachment.uri;
@@ -255,6 +351,27 @@ function serializeRichContent(indent: string, note: string): string {
   ].join("\n");
 }
 
+function serializeNodeRichContent(indent: string, node: MindMapNode, imageAttachments: NodeAttachment[]): string {
+  const title = escapeXml(node.title?.trim() ?? "");
+  const bodyLines = [
+    title ? `${indent}    <p>${title}</p>` : null,
+    ...imageAttachments.map((attachment) => {
+      const imageUri = escapeXml(attachment.uri.trim());
+      return `${indent}    <img src="${imageUri}" width="${FREEMIND_IMAGE_WIDTH}" />`;
+    }),
+  ].filter((line): line is string => !!line);
+
+  return [
+    `${indent}<richcontent TYPE="NODE">`,
+    `${indent}  <html>`,
+    `${indent}    <body>`,
+    ...bodyLines,
+    `${indent}    </body>`,
+    `${indent}  </html>`,
+    `${indent}</richcontent>`,
+  ].join("\n");
+}
+
 function serializeAttributes(indent: string, tags: string[]): string[] {
   if (tags.length === 0) {
     return [];
@@ -277,10 +394,12 @@ function serializeNode(
   nextVisited.add(nodeId);
 
   const indent = "  ".repeat(depth);
-  const attrs = buildNodeAttrs(map, node);
+  const imageAttachments = getNodeImageAttachments(node);
+  const attrs = buildNodeAttrs(map, node, imageAttachments.length > 0);
   const parentEdgeAttrs = buildParentEdgeAttrs(node);
   const arrowLinks = buildArrowLinkAttrs(map, node);
   const rawChildElements = node.vendor?.mm?.rawChildElements ?? [];
+  const noteContent = buildVisibleNoteContent(node);
 
   const detachedFromRoot =
     node.id === map.rootId
@@ -291,10 +410,10 @@ function serializeNode(
   const children = [...(node.children ?? []), ...detachedFromRoot]
     .filter((cid, index, arr) => arr.indexOf(cid) === index)
     .filter((cid) => !!map.nodes[cid]);
-  const hasNote = !!node.note?.trim();
   const tags = node.tags?.filter(Boolean) ?? [];
   const hasExtraContent =
-    hasNote ||
+    imageAttachments.length > 0 ||
+    !!noteContent ||
     tags.length > 0 ||
     !!parentEdgeAttrs ||
     arrowLinks.length > 0 ||
@@ -311,8 +430,12 @@ function serializeNode(
     lines.push(`${indent}  <edge ${parentEdgeAttrs} />`);
   }
 
-  if (hasNote) {
-    lines.push(serializeRichContent(`${indent}  `, node.note!.trim()));
+  if (imageAttachments.length > 0) {
+    lines.push(serializeNodeRichContent(`${indent}  `, node, imageAttachments));
+  }
+
+  if (noteContent) {
+    lines.push(serializeRichContent(`${indent}  `, noteContent));
   }
 
   lines.push(...serializeAttributes(`${indent}  `, tags));

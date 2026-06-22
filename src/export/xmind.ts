@@ -128,21 +128,136 @@ function applyManagedStyleProperties(
   }
 }
 
-function applyManagedNote(targetTopic: Record<string, unknown>, note: string | undefined) {
-  if (typeof note === "undefined") {
+const EXPORTED_DUE_LINE_PATTERN = /^Due:\s+\d{1,2}\.\d{1,2}\.\d{4}\s+\d{2}:\d{2}$/;
+
+function isImageAttachment(attachment: NodeAttachment | undefined) {
+  if (!attachment) {
+    return false;
+  }
+
+  const mime = attachment.mimeType?.toLowerCase() ?? "";
+  if (mime.startsWith("image/")) {
+    return true;
+  }
+
+  const source = `${attachment.name ?? ""} ${attachment.uri ?? ""}`.toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|heic|heif)(?:$|[?#\s])/i.test(source);
+}
+
+function isXmindVisibleAttachmentUri(uri: string | undefined) {
+  const value = uri?.trim();
+  return !!value && (/^xap:/i.test(value) || /^https?:\/\//i.test(value) || /^data:/i.test(value));
+}
+
+function formatVisibleDueAt(dueAt: string | undefined) {
+  const value = dueAt?.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const year = `${date.getFullYear()}`;
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `Due: ${day}.${month}.${year} ${hour}:${minute}`;
+}
+
+function stripVisibleExportMetadata(note: string) {
+  const lines = note.split(/\r?\n/);
+  const cleaned: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (EXPORTED_DUE_LINE_PATTERN.test(trimmed)) {
+      continue;
+    }
+
+    if (trimmed === "Attachments:") {
+      while (index + 1 < lines.length && lines[index + 1].trim().startsWith("- ")) {
+        index += 1;
+      }
+      continue;
+    }
+
+    cleaned.push(lines[index]);
+  }
+
+  return cleaned.join("\n").trim();
+}
+
+function visibleAttachmentLine(attachment: NodeAttachment) {
+  const name = attachment.name?.trim() || "Attachment";
+  const uri = attachment.uri?.trim() || "";
+  return uri ? `- ${name}: ${uri}` : `- ${name}`;
+}
+
+function buildVisibleNoteContent(
+  note: string | undefined,
+  dueAt: string | undefined,
+  attachments: NodeAttachment[] | undefined
+) {
+  const visibleDueAt = formatVisibleDueAt(dueAt);
+  const visibleAttachments = (attachments ?? []).filter(
+    (attachment) => !isImageAttachment(attachment) && isXmindVisibleAttachmentUri(attachment.uri)
+  );
+  const metadataLines: string[] = [];
+  const trimmedNote =
+    visibleDueAt || visibleAttachments.length > 0
+      ? stripVisibleExportMetadata(note ?? "")
+      : note?.trim() ?? "";
+
+  if (visibleDueAt) {
+    metadataLines.push(visibleDueAt);
+  }
+
+  if (visibleAttachments.length > 0) {
+    metadataLines.push("Attachments:");
+    metadataLines.push(...visibleAttachments.map(visibleAttachmentLine));
+  }
+
+  if (trimmedNote && metadataLines.length > 0) {
+    return `${trimmedNote}\n\n${metadataLines.join("\n")}`;
+  }
+
+  return trimmedNote || metadataLines.join("\n");
+}
+
+function applyManagedNote(
+  targetTopic: Record<string, unknown>,
+  note: string | undefined,
+  dueAt: string | undefined,
+  attachments: NodeAttachment[] | undefined
+) {
+  const visibleDueAt = formatVisibleDueAt(dueAt);
+  const visibleAttachments = (attachments ?? []).some(
+    (attachment) => !isImageAttachment(attachment) && isXmindVisibleAttachmentUri(attachment.uri)
+  );
+  if (typeof note === "undefined" && !visibleDueAt && !visibleAttachments) {
     return;
   }
 
-  const trimmed = note?.trim();
   const baseNotes = asRecord(targetTopic.notes) ?? {};
   const basePlain = asRecord(baseNotes.plain) ?? {};
+  const sourceNote =
+    typeof note === "undefined"
+      ? typeof basePlain.content === "string"
+        ? basePlain.content
+        : undefined
+      : note;
+  const nextContent = buildVisibleNoteContent(sourceNote, dueAt, attachments);
 
-  if (trimmed) {
+  if (nextContent) {
     targetTopic.notes = {
       ...baseNotes,
       plain: {
         ...basePlain,
-        content: trimmed,
+        content: nextContent,
       },
     };
     return;
@@ -163,6 +278,44 @@ function applyManagedNote(targetTopic: Record<string, unknown>, note: string | u
     targetTopic.notes = nextNotes;
   } else {
     delete targetTopic.notes;
+  }
+}
+
+function clearManagedAttachmentFields(targetTopic: Record<string, unknown>) {
+  delete targetTopic.image;
+  delete targetTopic.images;
+  delete targetTopic.img;
+  delete targetTopic["xhtml:img"];
+  delete targetTopic["svg:image"];
+  delete targetTopic["image-src"];
+  delete targetTopic.imageSrc;
+  delete targetTopic.imageUrl;
+  delete targetTopic["image-url"];
+  delete targetTopic.href;
+  delete targetTopic.hyperlink;
+  delete targetTopic.url;
+  delete targetTopic.link;
+}
+
+function applyManagedAttachments(targetTopic: Record<string, unknown>, node: MindMapNode) {
+  if (typeof node.attachments === "undefined") {
+    return;
+  }
+
+  const visibleAttachments = node.attachments.filter((attachment) => isXmindVisibleAttachmentUri(attachment.uri));
+  clearManagedAttachmentFields(targetTopic);
+
+  const imageAttachment = visibleAttachments.find(isImageAttachment);
+  if (imageAttachment?.uri) {
+    targetTopic.image = {
+      src: imageAttachment.uri,
+      preview: imageAttachment.uri,
+    };
+  }
+
+  const linkAttachment = visibleAttachments.find((attachment) => !isImageAttachment(attachment));
+  if (linkAttachment?.uri) {
+    targetTopic.href = linkAttachment.uri;
   }
 }
 
@@ -324,7 +477,8 @@ function buildTopic(
   topic.id = node.id;
   topic.title = escapeText(node.title);
   applyManagedTopicPosition(topic, node);
-  applyManagedNote(topic, node.note);
+  applyManagedAttachments(topic, node);
+  applyManagedNote(topic, node.note, node.dueAt, node.attachments);
   applyManagedLabels(topic, node);
 
   if (node.collapsed === true) {

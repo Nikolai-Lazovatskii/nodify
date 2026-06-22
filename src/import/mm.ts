@@ -13,9 +13,13 @@ type ParsedXmlNode = {
   };
   note?: string;
   tags?: string[];
+  dueAt?: string;
+  attachmentAttributes?: string[];
   edgeAttrs?: Record<string, string>;
   arrowLinks?: { attrs: Record<string, string> }[];
 };
+
+const EXPORTED_DUE_LINE_PATTERN = /^Due:\s+(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{2}):(\d{2})$/;
 
 function decodeXmlText(value: string | undefined): string {
   return (value ?? "")
@@ -107,6 +111,163 @@ function buildMmRichContentImageAttachment(
     id: `mm_image_${nodeId}`,
     name: getAttachmentNameFromLink(imageSrc, fallbackName),
     uri: imageSrc,
+  };
+}
+
+function normalizeNodifyAttachmentValue(
+  nodeId: string,
+  rawValue: string,
+  index: number
+): NodeAttachment | undefined {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return {
+      id: `mm_attachment_${nodeId}_${index + 1}`,
+      name: getAttachmentNameFromLink(trimmed, "Attachment"),
+      uri: trimmed,
+    };
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+
+  const value = parsed as Record<string, unknown>;
+  const uri = typeof value.uri === "string" ? value.uri.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  if (!uri) {
+    return undefined;
+  }
+
+  return {
+    id: id || `mm_attachment_${nodeId}_${index + 1}`,
+    name: name || getAttachmentNameFromLink(uri, "Attachment"),
+    uri,
+    mimeType: typeof value.mimeType === "string" && value.mimeType.trim() ? value.mimeType.trim() : undefined,
+    size: typeof value.size === "number" && Number.isFinite(value.size) ? value.size : undefined,
+  };
+}
+
+function mergeImportedAttachments(attachments: (NodeAttachment | undefined)[]) {
+  const merged: NodeAttachment[] = [];
+  const seen = new Set<string>();
+
+  for (const attachment of attachments) {
+    if (!attachment) {
+      continue;
+    }
+
+    const key = attachment.uri.trim() || attachment.id.trim();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(attachment);
+  }
+
+  return merged;
+}
+
+function parseVisibleDueAt(line: string) {
+  const match = EXPORTED_DUE_LINE_PATTERN.exec(line.trim());
+  if (!match) {
+    return undefined;
+  }
+
+  const day = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const year = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const date = new Date(year, month, day, hour, minute);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return undefined;
+  }
+
+  return date.toISOString();
+}
+
+function parseVisibleAttachmentLine(nodeId: string, line: string, index: number): NodeAttachment | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("- ")) {
+    return undefined;
+  }
+
+  const body = trimmed.slice(2).trim();
+  const delimiterIndex = body.indexOf(": ");
+  const rawName = delimiterIndex > 0 ? body.slice(0, delimiterIndex).trim() : "";
+  const uri = delimiterIndex > 0 ? body.slice(delimiterIndex + 2).trim() : body;
+  if (!uri) {
+    return undefined;
+  }
+
+  return {
+    id: `mm_note_attachment_${nodeId}_${index + 1}`,
+    name: rawName || getAttachmentNameFromLink(uri, "Attachment"),
+    uri,
+  };
+}
+
+function parseExportedMetadataFromNote(note: string | undefined, nodeId: string) {
+  const empty = {
+    note: note?.trim() || undefined,
+    dueAt: undefined as string | undefined,
+    attachments: [] as NodeAttachment[],
+  };
+
+  if (!note) {
+    return empty;
+  }
+
+  const lines = note.split(/\r?\n/);
+  const cleaned: string[] = [];
+  let dueAt: string | undefined;
+  const attachments: NodeAttachment[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    const visibleDueAt = parseVisibleDueAt(trimmed);
+    if (visibleDueAt) {
+      dueAt = visibleDueAt;
+      continue;
+    }
+
+    if (trimmed === "Attachments:") {
+      while (index + 1 < lines.length && lines[index + 1].trim().startsWith("- ")) {
+        index += 1;
+        const attachment = parseVisibleAttachmentLine(nodeId, lines[index], attachments.length);
+        if (attachment) {
+          attachments.push(attachment);
+        }
+      }
+      continue;
+    }
+
+    cleaned.push(lines[index]);
+  }
+
+  const result = cleaned.join("\n").trim();
+  return {
+    note: result || undefined,
+    dueAt,
+    attachments,
   };
 }
 
@@ -224,9 +385,16 @@ function parseMmTree(xml: string): ParsedXmlNode {
     if (tagName === "attribute" && !isClosing) {
       if (stack.length > 0) {
         const attrs = parseAttributes(rawAttrs);
-        if ((attrs.NAME ?? "").trim().toLowerCase() === "tag" && attrs.VALUE?.trim()) {
-          const node = stack[stack.length - 1];
-          node.tags = [...(node.tags ?? []), attrs.VALUE.trim()];
+        const name = (attrs.NAME ?? "").trim();
+        const lowerName = name.toLowerCase();
+        const value = attrs.VALUE?.trim();
+        const node = stack[stack.length - 1];
+        if (lowerName === "tag" && value) {
+          node.tags = [...(node.tags ?? []), value];
+        } else if (lowerName === "nodify.dueat" && value && !Number.isNaN(Date.parse(value))) {
+          node.dueAt = value;
+        } else if (lowerName === "nodify.attachment" && value) {
+          node.attachmentAttributes = [...(node.attachmentAttributes ?? []), value];
         }
       }
       continue;
@@ -338,15 +506,26 @@ function buildImportedNodes(
   );
   const linkAttachment = buildMmLinkAttachment(id, source.attrs, title);
   const imageAttachment = buildMmRichContentImageAttachment(id, source.richContentNode, title);
-  const attachments = [linkAttachment, imageAttachment].filter((attachment): attachment is NodeAttachment => !!attachment);
+  const attributeAttachments = (source.attachmentAttributes ?? []).map((value, index) =>
+    normalizeNodifyAttachmentValue(id, value, index)
+  );
+  const noteMetadata = parseExportedMetadataFromNote(source.note, id);
+  const attachments = mergeImportedAttachments([
+    ...attributeAttachments,
+    ...noteMetadata.attachments,
+    linkAttachment,
+    imageAttachment,
+  ]);
+  const dueAt = source.dueAt ?? noteMetadata.dueAt;
 
   const node: MindMapNode = {
     id,
     parentId,
     title,
-    note: source.note?.trim() || undefined,
+    note: noteMetadata.note,
     tags: source.tags?.filter(Boolean)?.length ? Array.from(new Set(source.tags.filter(Boolean))) : undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
+    dueAt,
     x: 0,
     y: 0,
     children: [],

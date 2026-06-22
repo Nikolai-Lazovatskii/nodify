@@ -16,6 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
 import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -57,6 +58,10 @@ function safeAttachmentFileName(attachment: NodeAttachment) {
   return base.includes(".") ? base : `${base}.${extensionFromMime(attachment.mimeType)}`;
 }
 
+function joinFileUri(baseUri: string, fileName: string) {
+  return baseUri.endsWith("/") ? `${baseUri}${fileName}` : `${baseUri}/${fileName}`;
+}
+
 async function writeDataAttachmentToCache(attachment: NodeAttachment) {
   const match = attachment.uri.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
   const base64 = match?.[2] ? match[3] : null;
@@ -70,6 +75,25 @@ async function writeDataAttachmentToCache(attachment: NodeAttachment) {
     encoding: FileSystem.EncodingType.Base64,
   });
   return fileUri;
+}
+
+async function copyPickedAttachmentToDocuments(sourceUri: string, attachment: NodeAttachment) {
+  const documentDir = FileSystem.documentDirectory;
+  if (!documentDir || sourceUri.startsWith(documentDir) || sourceUri.startsWith("data:")) {
+    return sourceUri;
+  }
+
+  const attachmentDir = joinFileUri(documentDir, "nodify-attachments");
+  await FileSystem.makeDirectoryAsync(attachmentDir, { intermediates: true });
+  const destinationUri = joinFileUri(
+    attachmentDir,
+    `${Date.now()}-${attachment.id}-${safeAttachmentFileName(attachment)}`
+  );
+  await FileSystem.copyAsync({
+    from: sourceUri,
+    to: destinationUri,
+  });
+  return destinationUri;
 }
 
 type Props = {
@@ -95,6 +119,9 @@ type Props = {
   onUpdateShape?: (nodeId: string, shape: NodeShape | undefined) => void;
   onUpdateEdge?: (nodeId: string, patch: { style?: EdgeStyle; width?: number; color?: string }) => void;
 };
+
+type InspectorTextField = "title" | "note" | "tags" | "date" | "time";
+type InspectorEditableTextField = "title" | "note" | "tags";
 
 const PALETTE = [
   "#38bdf8",
@@ -142,8 +169,16 @@ export default function NodeInspector({
   const [tagsDraft, setTagsDraft] = useState("");
   const [dateDraft, setDateDraft] = useState("");
   const [timeDraft, setTimeDraft] = useState("");
+  const [editableTextField, setEditableTextField] = useState<InspectorEditableTextField | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<NodeAttachment | null>(null);
   const headerActionRef = useRef<{ action: "save" | "close"; at: number } | null>(null);
+  const activeFieldRef = useRef<InspectorTextField | null>(null);
+  const previousNodeIdRef = useRef<string | null>(null);
+  const titleInputRef = useRef<TextInput | null>(null);
+  const noteInputRef = useRef<TextInput | null>(null);
+  const tagsInputRef = useRef<TextInput | null>(null);
+  const dateInputRef = useRef<TextInput | null>(null);
+  const timeInputRef = useRef<TextInput | null>(null);
 
   const formatDateDraft = (date: Date) => {
     const day = `${date.getDate()}`.padStart(2, "0");
@@ -152,19 +187,81 @@ export default function NodeInspector({
     return `${day}.${month}.${year}`;
   };
 
+  const focusInput = (field: InspectorTextField, ref: React.RefObject<TextInput | null>) => {
+    activeFieldRef.current = field;
+    ref.current?.focus();
+  };
+
+  const markInputFocus = (field: InspectorTextField) => {
+    activeFieldRef.current = field;
+  };
+
+  const markInputBlur = (field: InspectorTextField) => {
+    if (activeFieldRef.current === field) {
+      activeFieldRef.current = null;
+    }
+  };
+
+  const markEditableInputBlur = (field: InspectorEditableTextField) => {
+    markInputBlur(field);
+    setEditableTextField((currentField) => (currentField === field ? null : currentField));
+  };
+
+  const enableTextEditing = (field: InspectorEditableTextField) => {
+    activeFieldRef.current = field;
+    setEditableTextField(field);
+  };
+
   useEffect(() => {
-    setDraft(node?.title ?? "");
-    setNoteDraft(node?.note ?? "");
-    setTagsDraft((node?.tags ?? []).join(", "));
+    if (!editableTextField) {
+      return undefined;
+    }
+
+    const inputRef =
+      editableTextField === "title"
+        ? titleInputRef
+        : editableTextField === "note"
+          ? noteInputRef
+          : tagsInputRef;
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
+
+    return () => clearTimeout(focusTimer);
+  }, [editableTextField]);
+
+  useEffect(() => {
+    const nextNodeId = node?.id ?? null;
+    const sameNode = previousNodeIdRef.current === nextNodeId;
+    previousNodeIdRef.current = nextNodeId;
+    const activeField = sameNode ? activeFieldRef.current : null;
+
+    if (!sameNode) {
+      activeFieldRef.current = null;
+      setEditableTextField(null);
+    }
+
+    if (activeField !== "title") {
+      setDraft(node?.title ?? "");
+    }
+    if (activeField !== "note") {
+      setNoteDraft(node?.note ?? "");
+    }
+    if (activeField !== "tags") {
+      setTagsDraft((node?.tags ?? []).join(", "));
+    }
+
     const dueDate = node?.dueAt ? new Date(node.dueAt) : null;
-    if (dueDate && !Number.isNaN(dueDate.getTime())) {
-      const hour = `${dueDate.getHours()}`.padStart(2, "0");
-      const minute = `${dueDate.getMinutes()}`.padStart(2, "0");
-      setDateDraft(formatDateDraft(dueDate));
-      setTimeDraft(`${hour}:${minute}`);
-    } else {
-      setDateDraft("");
-      setTimeDraft("");
+    if (activeField !== "date" && activeField !== "time") {
+      if (dueDate && !Number.isNaN(dueDate.getTime())) {
+        const hour = `${dueDate.getHours()}`.padStart(2, "0");
+        const minute = `${dueDate.getMinutes()}`.padStart(2, "0");
+        setDateDraft(formatDateDraft(dueDate));
+        setTimeDraft(`${hour}:${minute}`);
+      } else {
+        setDateDraft("");
+        setTimeDraft("");
+      }
     }
   }, [node?.dueAt, node?.id, node?.note, node?.tags, node?.title]);
 
@@ -349,13 +446,17 @@ export default function NodeInspector({
         type?: string;
         size?: number;
       };
-
-      onAddAttachment(node.id, {
+      const attachment: NodeAttachment = {
         id: `a_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         name: pickedFile.name || t("inspector.unnamedAttachment"),
         uri: pickedFile.uri,
         mimeType: pickedFile.type || undefined,
         size: Number.isFinite(pickedFile.size) ? pickedFile.size : undefined,
+      };
+
+      onAddAttachment(node.id, {
+        ...attachment,
+        uri: await copyPickedAttachmentToDocuments(pickedFile.uri, attachment),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
@@ -488,6 +589,10 @@ export default function NodeInspector({
   const labelStyle = [s.label, isSide && s.labelSide, isDark && s.labelDark];
   const inputStyle = [s.input, isSide && s.inputSide, isDark && s.inputDark];
   const textareaStyle = [s.input, isSide && s.inputSide, isDark && s.inputDark, s.textarea, isSide && s.textareaSide];
+  const titleEditing = editableTextField === "title";
+  const noteEditing = editableTextField === "note";
+  const tagsEditing = editableTextField === "tags";
+  const getEditIconColor = (active: boolean) => (active ? "#ffffff" : isDark ? "#bae6fd" : "#0369a1");
 
   return (
     <>
@@ -541,55 +646,118 @@ export default function NodeInspector({
 
         <View style={s.row}>
           <Text style={labelStyle}>{t("inspector.name")}</Text>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={() => {
-              submit();
-              Keyboard.dismiss();
-            }}
-            style={inputStyle}
-            placeholder={t("inspector.nodeTitle")}
-            placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
-            blurOnSubmit
-            returnKeyType="done"
-          />
+          <View style={s.editableFieldRow}>
+            <TextInput
+              ref={titleInputRef}
+              value={draft}
+              onChangeText={setDraft}
+              editable={titleEditing}
+              onFocus={() => markInputFocus("title")}
+              onBlur={() => markEditableInputBlur("title")}
+              onSubmitEditing={() => {
+                submit();
+                Keyboard.dismiss();
+              }}
+              style={[inputStyle, s.editableFieldInput, !titleEditing && s.inputLocked, !titleEditing && isDark && s.inputLockedDark]}
+              placeholder={t("inspector.nodeTitle")}
+              placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+              blurOnSubmit
+              returnKeyType="done"
+            />
+            <Pressable
+              accessibilityLabel={`${t("common.edit")} ${t("inspector.name").toLowerCase()}`}
+              accessibilityRole="button"
+              hitSlop={4}
+              onPress={() => enableTextEditing("title")}
+              style={({ pressed }) => [
+                s.editFieldButton,
+                isSide && s.editFieldButtonSide,
+                isDark && s.editFieldButtonDark,
+                titleEditing && s.editFieldButtonActive,
+                pressed && s.pressed,
+              ]}
+            >
+              <MaterialIcons name="edit" size={18} color={getEditIconColor(titleEditing)} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={s.row}>
           <Text style={labelStyle}>{t("inspector.note")}</Text>
-          <TextInput
-            value={noteDraft}
-            onChangeText={setNoteDraft}
-            onSubmitEditing={() => {
-              submit();
-              Keyboard.dismiss();
-            }}
-            style={textareaStyle}
-            placeholder={t("inspector.notePlaceholder")}
-            placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
-            multiline
-            blurOnSubmit
-            returnKeyType="done"
-            textAlignVertical="top"
-          />
+          <View style={[s.editableFieldRow, s.editableTextareaRow]}>
+            <TextInput
+              ref={noteInputRef}
+              value={noteDraft}
+              onChangeText={setNoteDraft}
+              editable={noteEditing}
+              onFocus={() => markInputFocus("note")}
+              onBlur={() => markEditableInputBlur("note")}
+              onSubmitEditing={() => {
+                submit();
+                Keyboard.dismiss();
+              }}
+              style={[textareaStyle, s.editableFieldInput, !noteEditing && s.inputLocked, !noteEditing && isDark && s.inputLockedDark]}
+              placeholder={t("inspector.notePlaceholder")}
+              placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+              multiline
+              blurOnSubmit
+              returnKeyType="done"
+              textAlignVertical="top"
+            />
+            <Pressable
+              accessibilityLabel={`${t("common.edit")} ${t("inspector.note").toLowerCase()}`}
+              accessibilityRole="button"
+              hitSlop={4}
+              onPress={() => enableTextEditing("note")}
+              style={({ pressed }) => [
+                s.editFieldButton,
+                isSide && s.editFieldButtonSide,
+                isDark && s.editFieldButtonDark,
+                noteEditing && s.editFieldButtonActive,
+                pressed && s.pressed,
+              ]}
+            >
+              <MaterialIcons name="edit" size={18} color={getEditIconColor(noteEditing)} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={s.row}>
           <Text style={labelStyle}>{t("inspector.tags")}</Text>
-          <TextInput
-            value={tagsDraft}
-            onChangeText={setTagsDraft}
-            onSubmitEditing={() => {
-              submit();
-              Keyboard.dismiss();
-            }}
-            style={inputStyle}
-            placeholder={t("inspector.tagsPlaceholder")}
-            placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
-            blurOnSubmit
-            returnKeyType="done"
-          />
+          <View style={s.editableFieldRow}>
+            <TextInput
+              ref={tagsInputRef}
+              value={tagsDraft}
+              onChangeText={setTagsDraft}
+              editable={tagsEditing}
+              onFocus={() => markInputFocus("tags")}
+              onBlur={() => markEditableInputBlur("tags")}
+              onSubmitEditing={() => {
+                submit();
+                Keyboard.dismiss();
+              }}
+              style={[inputStyle, s.editableFieldInput, !tagsEditing && s.inputLocked, !tagsEditing && isDark && s.inputLockedDark]}
+              placeholder={t("inspector.tagsPlaceholder")}
+              placeholderTextColor={isDark ? "#94a3b8" : "#9ca3af"}
+              blurOnSubmit
+              returnKeyType="done"
+            />
+            <Pressable
+              accessibilityLabel={`${t("common.edit")} ${t("inspector.tags").toLowerCase()}`}
+              accessibilityRole="button"
+              hitSlop={4}
+              onPress={() => enableTextEditing("tags")}
+              style={({ pressed }) => [
+                s.editFieldButton,
+                isSide && s.editFieldButtonSide,
+                isDark && s.editFieldButtonDark,
+                tagsEditing && s.editFieldButtonActive,
+                pressed && s.pressed,
+              ]}
+            >
+              <MaterialIcons name="edit" size={18} color={getEditIconColor(tagsEditing)} />
+            </Pressable>
+          </View>
           <Text style={[s.helper, isDark && s.helperDark]}>{t("inspector.tagsHint")}</Text>
         </View>
 
@@ -611,8 +779,12 @@ export default function NodeInspector({
             <View style={s.inlineInputCell}>
               <Text style={labelStyle}>{t("inspector.date")}</Text>
               <TextInput
+                ref={dateInputRef}
                 value={dateDraft}
                 onChangeText={setDateDraft}
+                onPressIn={() => focusInput("date", dateInputRef)}
+                onFocus={() => markInputFocus("date")}
+                onBlur={() => markInputBlur("date")}
                 onSubmitEditing={applyDueAt}
                 style={inputStyle}
                 placeholder="27.04.2026"
@@ -625,8 +797,12 @@ export default function NodeInspector({
             <View style={s.inlineInputCell}>
               <Text style={labelStyle}>{t("inspector.time")}</Text>
               <TextInput
+                ref={timeInputRef}
                 value={timeDraft}
                 onChangeText={setTimeDraft}
+                onPressIn={() => focusInput("time", timeInputRef)}
+                onFocus={() => markInputFocus("time")}
+                onBlur={() => markInputBlur("time")}
                 onSubmitEditing={applyDueAt}
                 style={inputStyle}
                 placeholder="09:00"
@@ -1143,6 +1319,48 @@ const s = StyleSheet.create({
     borderColor: "#334155",
     backgroundColor: "#111827",
     color: "#f8fafc",
+  },
+  editableFieldRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
+  },
+  editableTextareaRow: {
+    alignItems: "flex-start",
+  },
+  editableFieldInput: {
+    flex: 1,
+  },
+  inputLocked: {
+    backgroundColor: "#f8fafc",
+    color: "#475569",
+  },
+  inputLockedDark: {
+    backgroundColor: "#0f172a",
+    color: "#cbd5e1",
+  },
+  editFieldButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#bae6fd",
+    backgroundColor: "#eff6ff",
+  },
+  editFieldButtonSide: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+  },
+  editFieldButtonDark: {
+    borderColor: "#334155",
+    backgroundColor: "#111827",
+  },
+  editFieldButtonActive: {
+    borderColor: "#0ea5e9",
+    backgroundColor: "#0ea5e9",
   },
   textarea: {
     height: 100,

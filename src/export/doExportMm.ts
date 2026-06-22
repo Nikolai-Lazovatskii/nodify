@@ -1,23 +1,13 @@
 /**
- * Súbor: src/export/doExportXmind.ts
- * Abstrakt: Vytvára súbor XMind a spúšťa zdieľanie alebo uloženie exportu v systéme.
+ * Súbor: src/export/doExportMm.ts
+ * Abstrakt: Vytvára súbor FreeMind a voliteľný ZIP balík s prílohami pre prenos medzi zariadeniami.
  */
 import JSZip from "jszip";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 
 import { MindMap, NodeAttachment } from "../types/map";
-import { exportToNodifyXmindMetadataJson, exportToXmindZenContentJson } from "./xmind";
-
-import manifestJson from "./templates/manifest.json";
-import metadataJson from "./templates/metadata.json";
-
-function safeFileName(name: string) {
-  return (name || "mind-map")
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .trim()
-    .slice(0, 60);
-}
+import { exportToMm } from "./mm";
 
 type PackagedAttachment = {
   zipPath: string;
@@ -31,12 +21,11 @@ type AttachmentReadFailure = {
   name: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+function safeFileName(name: string) {
+  return (name || "mind-map")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim()
+    .slice(0, 60);
 }
 
 function joinUri(baseUri: string, fileName: string) {
@@ -120,7 +109,7 @@ async function buildPortableMap(map: MindMap): Promise<{
   attachments: PackagedAttachment[];
   failures: AttachmentReadFailure[];
 }> {
-  const portableMap = clone(map);
+  const portableMap = JSON.parse(JSON.stringify(map)) as MindMap;
   const attachments: PackagedAttachment[] = [];
   const failures: AttachmentReadFailure[] = [];
   const usedPaths = new Set<string>();
@@ -155,7 +144,7 @@ async function buildPortableMap(map: MindMap): Promise<{
 
       nextAttachments.push({
         ...attachment,
-        uri: `xap:${zipPath}`,
+        uri: zipPath,
       });
     }
 
@@ -165,81 +154,52 @@ async function buildPortableMap(map: MindMap): Promise<{
   return { map: portableMap, attachments, failures };
 }
 
-function buildManifest(rawManifest: unknown, hasNodifyMetadata: boolean, attachmentPaths: string[]) {
-  const manifest = isRecord(rawManifest) ? clone(rawManifest) : clone(manifestJson);
-  const entries = isRecord(manifest["file-entries"]) ? { ...manifest["file-entries"] } : {};
-
-  if (hasNodifyMetadata) {
-    entries["nodify-metadata.json"] = {};
-  }
-
-  for (const path of attachmentPaths) {
-    entries[path] = {};
-  }
-
-  if (Object.keys(entries).length > 0) {
-    manifest["file-entries"] = entries;
-  }
-
-  return manifest;
-}
-
-export async function exportXmind(map: MindMap, dialogTitle = "Export XMind"): Promise<void> {
+export async function exportMm(map: MindMap, dialogTitle = "Export FreeMind"): Promise<void> {
   const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
   if (!baseDir) {
     throw new Error("FileSystem cache/document directory is not available");
   }
 
+  const fileBaseName = `${safeFileName(map.title)}-${map.id}`;
   const portable = await buildPortableMap(map);
   if (portable.failures.length > 0) {
     const names = portable.failures.map((failure) => failure.name).join(", ");
     throw new Error(`Some attached files are no longer readable. Reattach them and export again: ${names}`);
   }
 
-  const contentJson = exportToXmindZenContentJson(portable.map);
-  const nodifyMetadataJson = exportToNodifyXmindMetadataJson(portable.map);
-
-  const zip = new JSZip();
-  const rawManifest = map.importedFormat?.vendor?.xmind?.rawManifest;
-  const rawMetadata = map.importedFormat?.vendor?.xmind?.rawMetadata;
-  zip.file("content.json", contentJson);
-  zip.file(
-    "manifest.json",
-    JSON.stringify(
-      buildManifest(
-        rawManifest,
-        !!nodifyMetadataJson,
-        portable.attachments.map((attachment) => attachment.zipPath)
-      ),
-      null,
-      2
-    )
-  );
-  zip.file("metadata.json", JSON.stringify(rawMetadata ?? metadataJson, null, 2));
-  if (nodifyMetadataJson) {
-    zip.file("nodify-metadata.json", nodifyMetadataJson);
-  }
-  for (const attachment of portable.attachments) {
-    zip.file(attachment.zipPath, attachment.data, attachment.options);
-  }
-
-  const zipBase64 = await zip.generateAsync({ type: "base64" });
-
-  const fileName = `${safeFileName(map.title)}-${map.id}.xmind`;
-  const outUri = joinUri(baseDir, fileName);
-
-  await FileSystem.writeAsStringAsync(outUri, zipBase64, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
+  const xml = exportToMm(portable.map);
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) {
     throw new Error("Sharing is not available on this device");
   }
 
+  if (portable.attachments.length === 0) {
+    const outUri = joinUri(baseDir, `${fileBaseName}.mm`);
+    await FileSystem.writeAsStringAsync(outUri, xml, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+    await Sharing.shareAsync(outUri, {
+      mimeType: "text/xml",
+      dialogTitle,
+      UTI: "public.xml",
+    });
+    return;
+  }
+
+  const zip = new JSZip();
+  zip.file(`${fileBaseName}.mm`, xml);
+  for (const attachment of portable.attachments) {
+    zip.file(attachment.zipPath, attachment.data, attachment.options);
+  }
+
+  const zipBase64 = await zip.generateAsync({ type: "base64" });
+  const outUri = joinUri(baseDir, `${fileBaseName}-freemind.zip`);
+  await FileSystem.writeAsStringAsync(outUri, zipBase64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
   await Sharing.shareAsync(outUri, {
-    mimeType: "application/octet-stream",
-    UTI: "com.xmind.xmind",
+    mimeType: "application/zip",
     dialogTitle,
+    UTI: "public.zip-archive",
   });
 }

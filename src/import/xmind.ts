@@ -80,6 +80,7 @@ type XMindChildrenBucket = XMindTopic | XMindTopic[] | undefined;
 type StyleProperties = Record<string, string | undefined>;
 
 type XMindImageResolver = (topic: XMindTopic, nodeId: string) => Promise<NodeAttachment | undefined>;
+type XMindHrefResolver = (topic: XMindTopic, nodeId: string) => Promise<NodeAttachment | undefined>;
 
 function parseXmindShape(shapeClass: string | undefined): NodeShape | undefined {
   const value = (shapeClass ?? "").toLowerCase();
@@ -617,7 +618,7 @@ function getFileNameFromPath(path: string) {
   return decodeURIComponent(parts[parts.length - 1] || "image");
 }
 
-function mimeFromPath(path: string) {
+function mimeFromPath(path: string, fallback = "application/octet-stream") {
   const lower = path.toLowerCase().split(/[?#]/)[0];
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
@@ -635,7 +636,12 @@ function mimeFromPath(path: string) {
   if (lower.endsWith(".docx")) {
     return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   }
-  return "image/png";
+  return fallback;
+}
+
+function mimeFromDataUri(uri: string) {
+  const match = uri.match(/^data:([^;,]+)[;,]/i);
+  return match?.[1];
 }
 
 function normalizeXmindResourcePath(src: string) {
@@ -736,6 +742,29 @@ function findZipResource(zip: JSZip, src: string) {
   return fallback ? { file: fallback, path: fallback.name } : null;
 }
 
+async function resolveZipAttachmentUri(zip: JSZip, uri: string) {
+  if (/^data:/i.test(uri)) {
+    return {
+      uri,
+      mimeType: mimeFromDataUri(uri) ?? mimeFromPath(uri),
+      path: "",
+    };
+  }
+
+  const resource = findZipResource(zip, uri);
+  if (!resource) {
+    return null;
+  }
+
+  const base64 = await resource.file.async("base64");
+  const mimeType = mimeFromPath(resource.path);
+  return {
+    uri: `data:${mimeType};base64,${base64}`,
+    mimeType,
+    path: resource.path,
+  };
+}
+
 function createXmindImageResolver(zip: JSZip): XMindImageResolver {
   return async (topic, nodeId) => {
     const src = readTopicImageSource(topic);
@@ -748,7 +777,9 @@ function createXmindImageResolver(zip: JSZip): XMindImageResolver {
         id: `xmind_image_${nodeId}`,
         name: getFileNameFromPath(src) || "XMind image",
         uri: src,
-        mimeType: /^data:image\//i.test(src) ? src.slice(5, src.indexOf(";")) : mimeFromPath(src),
+        mimeType: /^data:image\//i.test(src)
+          ? mimeFromDataUri(src)
+          : mimeFromPath(src, "image/png"),
       };
     }
 
@@ -758,13 +789,31 @@ function createXmindImageResolver(zip: JSZip): XMindImageResolver {
     }
 
     const base64 = await resource.file.async("base64");
-    const mimeType = mimeFromPath(resource.path);
+    const mimeType = mimeFromPath(resource.path, "image/png");
     return {
       id: `xmind_image_${nodeId}`,
       name: getFileNameFromPath(resource.path) || "XMind image",
       uri: `data:${mimeType};base64,${base64}`,
       mimeType,
     };
+  };
+}
+
+async function resolveImportedAttachment(zip: JSZip, attachment: NodeAttachment): Promise<NodeAttachment> {
+  const uri = attachment.uri.trim();
+  if (/^https?:\/\//i.test(uri)) {
+    return attachment;
+  }
+
+  const resolved = await resolveZipAttachmentUri(zip, uri);
+  if (!resolved) {
+    return attachment;
+  }
+
+  return {
+    ...attachment,
+    uri: resolved.uri,
+    mimeType: attachment.mimeType ?? resolved.mimeType,
   };
 }
 
@@ -789,17 +838,37 @@ function normalizeImportedAttachment(value: unknown): NodeAttachment | null {
   };
 }
 
-function readTopicHrefAttachment(topic: XMindTopic, nodeId: string): NodeAttachment | undefined {
-  const href = extractStringField(topic, ["href", "hyperlink", "url", "link"]);
-  if (!href) {
-    return undefined;
-  }
+function createXmindHrefResolver(zip: JSZip): XMindHrefResolver {
+  return async (topic, nodeId) => {
+    const href = extractStringField(topic, ["href", "hyperlink", "url", "link"]);
+    if (!href) {
+      return undefined;
+    }
 
-  return {
-    id: `xmind_href_${nodeId}`,
-    name: getFileNameFromPath(href) || "XMind link",
-    uri: href,
-    mimeType: /^https?:\/\//i.test(href) ? undefined : mimeFromPath(href),
+    if (/^https?:\/\//i.test(href)) {
+      return {
+        id: `xmind_href_${nodeId}`,
+        name: getFileNameFromPath(href) || "XMind link",
+        uri: href,
+      };
+    }
+
+    const resolved = await resolveZipAttachmentUri(zip, href);
+    if (resolved) {
+      return {
+        id: `xmind_href_${nodeId}`,
+        name: getFileNameFromPath(resolved.path || href) || "XMind attachment",
+        uri: resolved.uri,
+        mimeType: resolved.mimeType,
+      };
+    }
+
+    return {
+      id: `xmind_href_${nodeId}`,
+      name: getFileNameFromPath(href) || "XMind link",
+      uri: href,
+      mimeType: mimeFromPath(href),
+    };
   };
 }
 
@@ -860,6 +929,36 @@ type NodifyXmindMetadata = Record<string, {
   attachments?: NodeAttachment[];
 }>;
 
+const EXPORTED_DUE_LINE_PATTERN = /^Due:\s+\d{1,2}\.\d{1,2}\.\d{4}\s+\d{2}:\d{2}$/;
+
+function stripExportedMetadataFromNote(note: string | undefined) {
+  if (!note) {
+    return undefined;
+  }
+
+  const lines = note.split(/\r?\n/);
+  const cleaned: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (EXPORTED_DUE_LINE_PATTERN.test(trimmed)) {
+      continue;
+    }
+
+    if (trimmed === "Attachments:") {
+      while (index + 1 < lines.length && lines[index + 1].trim().startsWith("- ")) {
+        index += 1;
+      }
+      continue;
+    }
+
+    cleaned.push(lines[index]);
+  }
+
+  const nextNote = cleaned.join("\n").trim();
+  return nextNote || undefined;
+}
+
 function parseNodifyXmindMetadata(raw: string | undefined): NodifyXmindMetadata {
   if (!raw) {
     return {};
@@ -905,11 +1004,12 @@ function parseNodifyXmindMetadata(raw: string | undefined): NodifyXmindMetadata 
   return metadata;
 }
 
-function applyNodifyXmindMetadata(
+async function applyNodifyXmindMetadata(
   nodes: Record<string, MindMapNode>,
   sourceTopicToNodeId: Record<string, string>,
-  metadata: NodifyXmindMetadata
-): Record<string, MindMapNode> {
+  metadata: NodifyXmindMetadata,
+  zip: JSZip
+): Promise<Record<string, MindMapNode>> {
   if (Object.keys(metadata).length === 0) {
     return nodes;
   }
@@ -923,13 +1023,19 @@ function applyNodifyXmindMetadata(
       continue;
     }
 
+    const metadataAttachments = await Promise.all(
+      (nodeMetadata.attachments ?? []).map((attachment) => resolveImportedAttachment(zip, attachment))
+    );
     const attachments = mergeImportedAttachments([
+      ...metadataAttachments,
       ...(node.attachments ?? []),
-      ...(nodeMetadata.attachments ?? []),
     ]);
 
     nextNodes[nodeId] = {
       ...node,
+      note: nodeMetadata.dueAt || metadataAttachments.length > 0
+        ? stripExportedMetadataFromNote(node.note)
+        : node.note,
       dueAt: nodeMetadata.dueAt ?? node.dueAt,
       attachments: attachments.length > 0 ? attachments : node.attachments,
     };
@@ -1099,7 +1205,8 @@ async function buildImportedNodes(
   usedIds: Set<string>,
   sourceTopicToNodeId: Record<string, string>,
   styleLookup: Map<string, StyleProperties>,
-  resolveImageAttachment: XMindImageResolver
+  resolveImageAttachment: XMindImageResolver,
+  resolveHrefAttachment: XMindHrefResolver
 ): Promise<{ rootId: string; nodes: Record<string, MindMapNode> }> {
   const id = resolveTopicId(topic, usedIds, counter);
   const sourceTopicId = typeof topic.id === "string" && topic.id.trim() ? topic.id.trim() : undefined;
@@ -1115,7 +1222,7 @@ async function buildImportedNodes(
   const fillColor = resolveTopicFillColor(topic, styleLookup);
   const displayColor = fillColor ?? resolveTopicLineColor(topic, styleLookup);
   const imageAttachment = await resolveImageAttachment(topic, id);
-  const hrefAttachment = readTopicHrefAttachment(topic, id);
+  const hrefAttachment = await resolveHrefAttachment(topic, id);
   const nodifyExtension = readNodifyTopicExtension(topic);
   const attachments = mergeImportedAttachments([
     ...(nodifyExtension.attachments ?? []),
@@ -1168,7 +1275,8 @@ async function buildImportedNodes(
       usedIds,
       sourceTopicToNodeId,
       styleLookup,
-      resolveImageAttachment
+      resolveImageAttachment,
+      resolveHrefAttachment
     );
     node.children.push(parsedChild.rootId);
     Object.assign(nodes, parsedChild.nodes);
@@ -1182,7 +1290,8 @@ async function buildImportedNodes(
       usedIds,
       sourceTopicToNodeId,
       styleLookup,
-      resolveImageAttachment
+      resolveImageAttachment,
+      resolveHrefAttachment
     );
     Object.assign(nodes, parsedFloating.nodes);
   }
@@ -1289,6 +1398,7 @@ export async function importFromXmind(
   const sourceTopicToNodeId: Record<string, string> = {};
   const styleLookup = collectStyleLookup(parsed);
   const resolveImageAttachment = createXmindImageResolver(zip);
+  const resolveHrefAttachment = createXmindHrefResolver(zip);
   const parsedRoot = await buildImportedNodes(
     rootTopic,
     null,
@@ -1296,17 +1406,19 @@ export async function importFromXmind(
     usedIds,
     sourceTopicToNodeId,
     styleLookup,
-    resolveImageAttachment
+    resolveImageAttachment,
+    resolveHrefAttachment
   );
   const importedRelationships = importRelationships(
     activeSheet,
     parsedRoot.nodes,
     sourceTopicToNodeId
   );
-  const nodes = applyNodifyXmindMetadata(
+  const nodes = await applyNodifyXmindMetadata(
     parsedRoot.nodes,
     sourceTopicToNodeId,
-    parseNodifyXmindMetadata(nodifyMetadataRaw)
+    parseNodifyXmindMetadata(nodifyMetadataRaw),
+    zip
   );
 
   return preserveImportedPositions(layoutImportedMap({

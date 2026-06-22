@@ -40,6 +40,7 @@ type XMindTopicOutput = {
       content?: string;
     };
   };
+  image?: { preview?: string; src?: string } | string;
   children?: {
     attached?: XMindTopicOutput[];
     detached?: XMindTopicOutput[];
@@ -97,11 +98,21 @@ type NodifyMetadataOutput = {
 
 const mockWrittenFiles: { uri: string; value: string; options: unknown }[] = [];
 const mockSharedFiles: { uri: string; options: unknown }[] = [];
+const mockFileBase64 = "UEZERGF0YQ==";
+const mockReadFiles = new Map<string, string>();
+const mockUnreadableUris = new Set<string>();
 
 jest.mock("expo-file-system/legacy", () => ({
   cacheDirectory: "cache/",
   documentDirectory: "documents/",
-  EncodingType: { Base64: "base64" },
+  EncodingType: { Base64: "base64", UTF8: "utf8" },
+  readAsStringAsync: (uri: string): Promise<string> => {
+    if (mockUnreadableUris.has(uri)) {
+      return Promise.reject(new Error("File is not readable"));
+    }
+
+    return Promise.resolve(mockReadFiles.get(uri) ?? mockFileBase64);
+  },
   writeAsStringAsync: (uri: string, value: string, options: unknown): Promise<void> => {
     mockWrittenFiles.push({ uri, value, options });
     return Promise.resolve();
@@ -140,6 +151,8 @@ describe("exportToXmindZenContentJson", () => {
   beforeEach(() => {
     mockWrittenFiles.length = 0;
     mockSharedFiles.length = 0;
+    mockReadFiles.clear();
+    mockUnreadableUris.clear();
     rootNode = {
       id: "root",
       parentId: null,
@@ -230,6 +243,8 @@ describe("exportToXmindZenContentJson", () => {
 
     expect(child?.extensions?.nodify).toBe(undefined);
     expect(child?.href).toBe(undefined);
+    expect(child?.notes?.plain?.content).toContain("Child note");
+    expect(child?.notes?.plain?.content).toContain("Due:");
     expect(metadata.nodes?.child?.dueAt).toBe("2026-06-10T08:30:00.000Z");
     expect(metadata.nodes?.child?.attachments).toEqual([
       {
@@ -297,6 +312,98 @@ describe("exportToXmindZenContentJson", () => {
     expect(manifest["file-entries"]?.["nodify-metadata.json"]).toBeDefined();
     expect(nodifyMetadata.nodes?.child?.dueAt).toBe("2026-06-10T08:30:00.000Z");
     expect(nodifyMetadata.nodes?.child?.attachments).toHaveLength(1);
+  });
+
+  it("packages local image attachments into the .xmind ZIP", async () => {
+    const imageBase64 = "UE5HREFUQQ==";
+    mockReadFiles.set("/local/photo.png", imageBase64);
+    map.nodes.child.attachments = [
+      {
+        id: "image-1",
+        name: "photo.png",
+        uri: "/local/photo.png",
+        mimeType: "image/png",
+        size: 4096,
+      },
+    ];
+
+    await exportXmind(map, "Save test");
+
+    const zip = await JSZip.loadAsync(mockWrittenFiles[0].value, { base64: true });
+    const contentRaw = await zip.file("content.json")?.async("string");
+    const manifestRaw = await zip.file("manifest.json")?.async("string");
+    const attachmentBase64 = await zip.file("attachments/photo.png")?.async("base64");
+    const child = parseFirstSheet(contentRaw ?? "").rootTopic?.children?.attached?.find(
+      (topic) => topic.id === "child"
+    );
+    const image = child?.image;
+    const imageSrc = typeof image === "string" ? image : image?.src;
+    const imagePreview = typeof image === "string" ? image : image?.preview;
+    const manifest = JSON.parse(manifestRaw ?? "{}") as { "file-entries"?: Record<string, unknown> };
+
+    expect(zip.file("attachments/photo.png")).toBeDefined();
+    expect(attachmentBase64).toBe(imageBase64);
+    expect(imageSrc).toBe("xap:attachments/photo.png");
+    expect(imagePreview).toBe("xap:attachments/photo.png");
+    expect(manifest["file-entries"]?.["attachments/photo.png"]).toBeDefined();
+
+    const imported = await importFromXmind(mockWrittenFiles[0].value);
+    expect(imported.nodes.child.attachments?.[0].name).toBe("photo.png");
+    expect(imported.nodes.child.attachments?.[0].uri).toBe(`data:image/png;base64,${imageBase64}`);
+  });
+
+  it("packages local file attachments into the .xmind ZIP as href links", async () => {
+    mockReadFiles.set("/local/brief.pdf", mockFileBase64);
+    map.nodes.child.attachments = [
+      {
+        id: "attachment-1",
+        name: "brief.pdf",
+        uri: "/local/brief.pdf",
+        mimeType: "application/pdf",
+      },
+    ];
+
+    await exportXmind(map, "Save test");
+
+    const zip = await JSZip.loadAsync(mockWrittenFiles[0].value, { base64: true });
+    const contentRaw = await zip.file("content.json")?.async("string");
+    const attachmentBase64 = await zip.file("attachments/brief.pdf")?.async("base64");
+    const child = parseFirstSheet(contentRaw ?? "").rootTopic?.children?.attached?.find(
+      (topic) => topic.id === "child"
+    );
+
+    expect(zip.file("attachments/brief.pdf")).toBeDefined();
+    expect(attachmentBase64).toBe(mockFileBase64);
+    expect(child?.href).toBe("xap:attachments/brief.pdf");
+
+    const imported = await importFromXmind(mockWrittenFiles[0].value);
+    expect(imported.nodes.child.attachments?.[0].name).toBe("brief.pdf");
+    expect(imported.nodes.child.attachments?.[0].uri).toBe(`data:application/pdf;base64,${mockFileBase64}`);
+  });
+
+  it("fails clearly when an old temporary XMind attachment is no longer readable", async () => {
+    const unreadableUri = "file:///tmp/host.exp.Exponent-Inbox/screenshot.png";
+    mockUnreadableUris.add(unreadableUri);
+    map.nodes.child.attachments = [
+      {
+        id: "image-1",
+        name: "screenshot.png",
+        uri: unreadableUri,
+        mimeType: "image/png",
+      },
+    ];
+
+    let message = "";
+    try {
+      await exportXmind(map, "Save test");
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("no longer readable");
+    expect(message).toContain("screenshot.png");
+    expect(mockWrittenFiles).toHaveLength(0);
+    expect(mockSharedFiles).toHaveLength(0);
   });
 
   it("preserves key properties in an XMind round trip", async () => {

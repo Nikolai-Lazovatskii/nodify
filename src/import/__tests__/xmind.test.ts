@@ -23,6 +23,7 @@ type XMindTopicFixture = {
   id: string;
   title: string;
   href?: string;
+  image?: { src?: string } | string;
   branch?: string;
   labels?: string[];
   notes?: {
@@ -67,13 +68,20 @@ type XMindSheetFixture = {
 
 let sheet: XMindSheetFixture;
 
-async function createXmindZipBase64(content: unknown, nodifyMetadata?: unknown): Promise<string> {
+async function createXmindZipBase64(
+  content: unknown,
+  nodifyMetadata?: unknown,
+  attachments?: Record<string, string>
+): Promise<string> {
   const zip = new JSZip();
   zip.file("content.json", JSON.stringify(content));
   zip.file("manifest.json", JSON.stringify({ "file-entries": {} }));
   zip.file("metadata.json", JSON.stringify({ creator: "test" }));
   if (nodifyMetadata) {
     zip.file("nodify-metadata.json", JSON.stringify(nodifyMetadata));
+  }
+  for (const [path, base64] of Object.entries(attachments ?? {})) {
+    zip.file(path, base64, { base64: true });
   }
   return zip.generateAsync({ type: "base64" });
 }
@@ -138,6 +146,7 @@ describe("importFromXmind", () => {
         {
           id: "branch",
           title: "Branch",
+          notes: { plain: { content: "Remember this\n\nDue: 10.06.2026 10:30" } },
         },
       ],
     };
@@ -164,6 +173,7 @@ describe("importFromXmind", () => {
     ));
 
     expect(map.nodes.branch.dueAt).toBe("2026-06-10T08:30:00.000Z");
+    expect(map.nodes.branch.note).toBe("Remember this");
     expect(map.nodes.branch.attachments).toEqual([
       {
         id: "attachment-1",
@@ -232,6 +242,84 @@ describe("importFromXmind", () => {
         name: "brief.pdf",
         uri: "file:///brief.pdf",
         mimeType: "application/pdf",
+      },
+    ]);
+  });
+
+  it("imports packaged XMind href resources as portable attachments", async () => {
+    const pdfBase64 = "UEZERGF0YQ==";
+    sheet.rootTopic.children = {
+      attached: [
+        {
+          id: "branch",
+          title: "Branch",
+          href: "xap:attachments/brief.pdf",
+        },
+      ],
+    };
+
+    const map = await importFromXmind(await createXmindZipBase64(
+      { sheets: [sheet] },
+      undefined,
+      { "attachments/brief.pdf": pdfBase64 }
+    ));
+
+    expect(map.nodes.branch.attachments).toEqual([
+      {
+        id: "xmind_href_branch",
+        name: "brief.pdf",
+        uri: `data:application/pdf;base64,${pdfBase64}`,
+        mimeType: "application/pdf",
+      },
+    ]);
+  });
+
+  it("imports packaged Nodify metadata attachments from the XMind ZIP", async () => {
+    const imageBase64 = "UE5HREFUQQ==";
+    sheet.rootTopic.children = {
+      attached: [
+        {
+          id: "branch",
+          title: "Branch",
+          notes: {
+            plain: {
+              content: "Remember this\n\nAttachments:\n- photo.png: xap:attachments/photo.png",
+            },
+          },
+          image: { src: "xap:attachments/photo.png" },
+        },
+      ],
+    };
+
+    const map = await importFromXmind(await createXmindZipBase64(
+      { sheets: [sheet] },
+      {
+        version: 1,
+        nodes: {
+          branch: {
+            attachments: [
+              {
+                id: "image-1",
+                name: "photo.png",
+                uri: "xap:attachments/photo.png",
+                mimeType: "image/png",
+                size: 4096,
+              },
+            ],
+          },
+        },
+      },
+      { "attachments/photo.png": imageBase64 }
+    ));
+
+    expect(map.nodes.branch.note).toBe("Remember this");
+    expect(map.nodes.branch.attachments).toEqual([
+      {
+        id: "image-1",
+        name: "photo.png",
+        uri: `data:image/png;base64,${imageBase64}`,
+        mimeType: "image/png",
+        size: 4096,
       },
     ]);
   });
