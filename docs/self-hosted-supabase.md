@@ -40,11 +40,17 @@ The real `.env` file is local-only and must not be committed. Use `.env.example`
 
 ## Deployment Outline
 
-1. Deploy self-hosted Supabase on the department server using Docker.
+1. Deploy self-hosted Supabase on the department server using Docker:
+   `infra/supabase/scripts/bootstrap-official-stack.sh /srv/nodify/supabase`.
 2. Configure public URL, JWT secret, anon key, service role key, database password, and SMTP.
-3. Apply `supabase/migrations/001_initial_schema.sql`.
-4. Create a test user through the app or Supabase Studio.
-5. Verify:
+3. Start the stack with `sh run.sh start` from the Supabase deploy directory.
+4. Apply `supabase/migrations/001_initial_schema.sql`:
+   `infra/supabase/scripts/apply-nodify-schema.sh /srv/nodify/supabase`.
+5. Print the mobile app env values:
+   `infra/supabase/scripts/print-app-env.sh /srv/nodify/supabase`.
+6. Put those values into the app `.env`.
+7. Create a test user through the app or Supabase Studio.
+8. Verify:
    - login/register works;
    - a map can be created;
    - a map appears in `public.mind_maps`;

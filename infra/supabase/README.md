@@ -1,24 +1,79 @@
-# Supabase Deployment Notes
+# Self-hosted Supabase Server Deployment
 
-This directory documents the server-side deployment target for Nodify. The recommended deployment is the official self-hosted Supabase Docker stack running on the department server.
+This directory contains the deployment wrapper for the server-side part of Nodify.
+The runtime is the official self-hosted Supabase Docker stack; this repository adds
+Nodify-specific schema migration and operational notes.
 
-## Recommended Flow
+The full official Docker Compose files are not vendored here because Supabase updates
+them separately. Use the scripts in `infra/supabase/scripts/` to fetch the official
+stack and then apply the Nodify schema.
 
-1. On the server, clone the official Supabase repository or copy the official Docker self-hosting setup.
-2. Configure the Supabase `.env` values. Use `infra/supabase/.env.example` as a checklist, not as a complete production config.
-3. Start the Supabase Docker stack.
-4. Apply the Nodify schema migration from the repository root:
+Official reference: https://supabase.com/docs/guides/self-hosting/docker
+
+## Server Requirements
+
+- Linux host with Docker and Docker Compose plugin.
+- Public HTTPS URL or a reverse proxy path for the Supabase API.
+- Persistent disk for the Postgres volume.
+- Regular database backups.
+- SMTP settings if email confirmation or password recovery is enabled.
+
+## Quick Deployment
+
+Clone Nodify on the server:
 
 ```bash
-psql "$DATABASE_URL" -f supabase/migrations/001_initial_schema.sql
+git clone https://github.com/Nikolai-Lazovatskii/nodify.git /srv/nodify/app
+cd /srv/nodify/app
 ```
 
-5. In the mobile app environment, set:
+Fetch the official Supabase Docker stack into a deploy directory:
+
+```bash
+./infra/supabase/scripts/bootstrap-official-stack.sh /srv/nodify/supabase
+```
+
+Configure Supabase secrets:
+
+```bash
+cd /srv/nodify/supabase
+cp .env.example .env
+nano .env
+```
+
+Start the Supabase stack:
+
+```bash
+sh run.sh start
+```
+
+Apply the Nodify database schema from the app repository:
+
+```bash
+cd /srv/nodify/app
+./infra/supabase/scripts/apply-nodify-schema.sh /srv/nodify/supabase
+```
+
+Print the Expo client environment values:
+
+```bash
+./infra/supabase/scripts/print-app-env.sh /srv/nodify/supabase
+```
+
+The output should be copied into the mobile app `.env`:
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-supabase-host.example
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
+
+## Environment Notes
+
+Use `infra/supabase/.env.example` as a short checklist for important variables, not
+as a full replacement for the official Supabase `.env.example`.
+
+Never commit generated `.env` files, database passwords, JWT secrets, secret keys,
+or service role keys. Only the public anon/publishable key belongs in the Expo app.
 
 ## Required Tables
 
@@ -27,17 +82,31 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 The full schema is in `supabase/migrations/001_initial_schema.sql`.
 
-## What to Ask the Department Admin For
+## Script Reference
 
-- Linux host with Docker and Docker Compose.
-- Public HTTPS URL or reverse proxy path.
-- Persistent Postgres volume.
-- Regular database backups.
-- SMTP settings for account confirmation and password recovery, if email confirmation is enabled.
+- `bootstrap-official-stack.sh [deploy-dir]` - copies the official Supabase Docker
+  stack into the deployment directory.
+- `apply-nodify-schema.sh [deploy-dir] [migration-file]` - applies the Nodify SQL
+  schema inside the running Supabase Postgres container.
+- `print-app-env.sh [deploy-dir]` - prints the two `EXPO_PUBLIC_SUPABASE_*`
+  variables needed by the mobile app.
 
 ## Production Checklist
 
 - Change all generated secrets from examples.
-- Keep `SERVICE_ROLE_KEY` server-only.
-- Enable HTTPS before using the mobile client outside local testing.
+- Keep `SERVICE_ROLE_KEY` and `SUPABASE_SECRET_KEY` server-only.
+- Put the Supabase API behind HTTPS before using the mobile client outside local testing.
+- Back up the Postgres volume/database regularly.
 - Test register, login, map creation, map sync, and soft delete.
+
+## Updating Supabase
+
+For server updates, follow the official self-hosting update instructions for the
+Supabase Docker stack, then run:
+
+```bash
+cd /srv/nodify/app
+./infra/supabase/scripts/apply-nodify-schema.sh /srv/nodify/supabase
+```
+
+The migration is written to be idempotent, so re-running it is safe.
