@@ -78,9 +78,17 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 
 Uvádza sa výhradne verejný (anon) kľúč, ktorý je pri zapnutej Row Level Security bezpečné sprístupniť v klientovi. Servisný (`service_role`) kľúč ani reálny súbor `.env` so súkromnými údajmi nikdy nepatria do repozitára.
 
-Bez týchto hodnôt aplikácia spustená zo zdrojového kódu funguje v anonymnom/offline režime (cloudové funkcie sú vypnuté). Pre plnú reprodukciu cloudových funkcií zo zdrojového kódu je potrebný vlastný Supabase projekt so zodpovedajúcou databázovou schémou; plný cloudový režim je zároveň dostupný cez priložený APK build napojený na referenčný backend.
+V aktuálnej verzii sú tieto hodnoty potrebné už pri štarte aplikácie, pretože Supabase klient sa inicializuje v koreňovom rozložení. Anonymný režim znamená používanie aplikácie bez prihlásenia, nie spustenie bez nakonfigurovaného Supabase endpointu. Pre plnú reprodukciu cloudových funkcií zo zdrojového kódu je potrebný vlastný Supabase projekt alebo self-hosted Supabase inštancia so zodpovedajúcou databázovou schémou; plný cloudový režim je zároveň dostupný cez priložený APK build napojený na referenčný backend.
 
 Pri EAS builde musia byť tieto hodnoty dostupné aj v prostredí buildu, inak bude zostavená aplikácia fungovať iba bez cloudových funkcií.
+
+### Self-hosted Supabase
+
+Cloudovú časť je možné prevádzkovať aj mimo Supabase Cloud ako self-hosted Supabase na vlastnom serveri. Schéma databázy, RLS politiky a poznámky k nasadeniu sú pripravené v:
+
+- `supabase/migrations/001_initial_schema.sql`
+- `docs/self-hosted-supabase.md`
+- `infra/supabase/README.md`
 
 ## Testovanie
 
