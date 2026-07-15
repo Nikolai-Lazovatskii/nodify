@@ -10,6 +10,11 @@ stack and then apply the Nodify schema.
 
 Official reference: https://supabase.com/docs/guides/self-hosting/docker
 
+For a short Slovak handoff document for the department administrator, see
+`docs/department-server-handoff.sk.md`.
+
+For the Dockerfile/Docker Compose explanation, see `infra/supabase/DOCKER.md`.
+
 ## Server Requirements
 
 - Linux host with Docker and Docker Compose plugin.

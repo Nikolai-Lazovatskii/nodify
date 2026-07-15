@@ -88,6 +88,8 @@ Cloudovú časť je možné prevádzkovať aj mimo Supabase Cloud ako self-hoste
 
 - `supabase/migrations/001_initial_schema.sql`
 - `docs/self-hosted-supabase.md`
+- `docs/department-server-handoff.sk.md`
+- `infra/supabase/DOCKER.md`
 - `infra/supabase/README.md`
 
 ## Testovanie

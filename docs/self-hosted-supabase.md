@@ -10,6 +10,9 @@ Nodify can use a self-hosted Supabase instance instead of Supabase Cloud. The mo
 
 Nodify currently does not require Supabase Storage, Realtime, Edge Functions, or Vector.
 
+For the department server handoff, see `docs/department-server-handoff.sk.md`.
+For the Docker architecture note, see `infra/supabase/DOCKER.md`.
+
 ## Database Schema
 
 Apply the migration:
