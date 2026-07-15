@@ -3,14 +3,14 @@
  * Abstrakt: Prevádza internú myšlienkovú mapu do XML formátu FreeMind.
  */
 import { MindMap, MindMapNode, NodeAttachment } from "../types/map";
-import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
+import { prepareMapLayout } from "../screens/mapScreen/mapModel";
 
 const FREEMIND_EXPORT_VERSION = "1.0.1";
 const EXPORTED_DUE_LINE_PATTERN = /^Due:\s+\d{1,2}\.\d{1,2}\.\d{4}\s+\d{2}:\d{2}$/;
 const FREEMIND_IMAGE_WIDTH = 240;
 
 export function exportToMm(map: MindMap): string {
-  const exportMap = layoutStructuredMap(map);
+  const exportMap = prepareMapLayout(map);
   if (!exportMap.nodes[exportMap.rootId]) {
     throw new Error("Root node not found");
   }

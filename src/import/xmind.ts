@@ -1425,6 +1425,7 @@ export async function importFromXmind(
     id: "imported",
     title: safeTitle(activeSheet.title ?? rootTopic.title, fallbackTitle),
     rootId: parsedRoot.rootId,
+    layoutMode: "imported",
     nodes,
     edges: importedRelationships.edges,
     importedFormat: {

@@ -8,6 +8,8 @@ export type NodeShape = "circle" | "rounded" | "capsule";
 
 export type EdgeStyle = "solid" | "dashed";
 
+export type MapLayoutMode = "structured" | "imported" | "manual";
+
 export type JsonValue =
   | null
   | boolean
@@ -127,6 +129,7 @@ export type MindMap = {
   id: string;
   title: string;
   rootId: string;
+  layoutMode?: MapLayoutMode;
   nodes: Record<string, MindMapNode>;
   edges: RelationshipEdge[];
   importedFormat?: ImportedFormatMetadata;

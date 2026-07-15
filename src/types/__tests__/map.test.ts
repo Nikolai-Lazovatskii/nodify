@@ -8,6 +8,7 @@ import {
   enforceRootConnectivity,
   hasRelationshipEdge,
   normalizeMap,
+  prepareMapLayout,
 } from "../../screens/mapScreen/mapModel";
 
 type TestMatchers = {
@@ -126,5 +127,47 @@ describe("MindMapNode model", () => {
     expect(visibleIds.has("root")).toBe(true);
     expect(visibleIds.has("branch")).toBe(true);
     expect(visibleIds.has("leaf")).toBe(false);
+  });
+
+  it("preserves coordinates for imported-layout maps", () => {
+    const map = createRootOnlyMap();
+    map.importedFormat = {
+      sourceFormat: "xmind",
+      importedAt: "2026-06-14T00:00:00.000Z",
+    };
+    map.nodes.root.children = ["child"];
+    map.nodes.child = {
+      id: "child",
+      parentId: "root",
+      title: "Child",
+      x: 123,
+      y: 456,
+      children: [],
+    };
+
+    const prepared = prepareMapLayout(map);
+
+    expect(prepared.layoutMode).toBe("imported");
+    expect(prepared.nodes.child.x).toBe(123);
+    expect(prepared.nodes.child.y).toBe(456);
+  });
+
+  it("keeps structured maps on the automatic tree layout", () => {
+    const map = createRootOnlyMap();
+    map.nodes.root.children = ["child"];
+    map.nodes.child = {
+      id: "child",
+      parentId: "root",
+      title: "Child",
+      x: 10,
+      y: 456,
+      children: [],
+    };
+
+    const prepared = prepareMapLayout(map);
+
+    expect(prepared.layoutMode).toBe("structured");
+    expect(prepared.nodes.child.x).toBe(230);
+    expect(prepared.nodes.child.y).toBe(0);
   });
 });

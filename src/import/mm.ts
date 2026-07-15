@@ -794,6 +794,7 @@ export async function importFromMm(xml: string, fallbackTitle = "Imported mind m
     id: "imported",
     title: safeNodeTitle(rootSource.attrs.TEXT, fallbackTitle),
     rootId: parsedRoot.rootId,
+    layoutMode: "imported",
     nodes: parsedRoot.nodes,
     edges: relationshipEdges,
     importedFormat: {

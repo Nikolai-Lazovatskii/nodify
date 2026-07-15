@@ -71,6 +71,7 @@ jest.mock("../../export/doExportXmind", () => ({
 
 jest.mock("../../screens/mapScreen/mapModel", () => ({
   layoutStructuredMap: (map: unknown): unknown => map,
+  prepareMapLayout: (map: unknown): unknown => map,
 }));
 
 function createMap(id = "map-1", title = "Test Map"): MindMap {

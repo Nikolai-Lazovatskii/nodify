@@ -7,7 +7,7 @@ import { MapMeta, MindMap } from "../types/map";
 import { exportXmind } from "../export/doExportXmind";
 import { supabase } from "../lib/supabase";
 import { cloudGetMap, cloudListMaps, cloudSoftDeleteMap, cloudUpsertMap, type CloudMapRow } from "./cloudMapsRepo";
-import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
+import { prepareMapLayout } from "../screens/mapScreen/mapModel";
 
 const INDEX_KEY = "nodify:maps:index:v1";
 const DOC_KEY = (id: string) => `nodify:maps:doc:v1:${id}`;
@@ -334,6 +334,7 @@ export async function createMap(
       id,
       title: nextTitle,
       rootId: "root",
+      layoutMode: "structured",
       edges: [],
       nodes: {
         root: { id: "root", parentId: null, title: rootTitle, x: 0, y: 0, children: [] },
@@ -420,7 +421,7 @@ export async function loadMap(id: string): Promise<MindMap | null> {
 export async function saveMap(map: MindMap): Promise<void> {
   try {
     const userId = await getUserId();
-    const mapToSave = layoutStructuredMap(map);
+    const mapToSave = prepareMapLayout(map);
 
     if (userId) {
       try {

@@ -2,7 +2,7 @@
  * Súbor: src/screens/mapScreen/mapModel.ts
  * Abstrakt: Obsahuje operácie nad dátovým modelom mapy, uzlami a vzťahmi.
  */
-import { MindMap, MindMapNode, NodeAttachment, RelationshipEdge } from "@/src/types/map";
+import { MapLayoutMode, MindMap, MindMapNode, NodeAttachment, RelationshipEdge } from "@/src/types/map";
 import { estimateNodeHalfBounds } from "./routing";
 
 const STRUCTURED_LEVEL_GAP = 230;
@@ -22,12 +22,51 @@ export function defaultTranslate(key: string) {
   return fallback[key] ?? key;
 }
 
+function isMapLayoutMode(value: unknown): value is MapLayoutMode {
+  return value === "structured" || value === "imported" || value === "manual";
+}
+
+export function hasImportedLayoutData(map: MindMap): boolean {
+  if (map.importedFormat?.sourceFormat === "mm" || map.importedFormat?.sourceFormat === "xmind") {
+    return true;
+  }
+
+  return (
+    Object.values(map.nodes).some((node) => !!node.vendor?.mm || !!node.vendor?.xmind) ||
+    map.edges.some((edge) => !!edge.vendor?.mm || !!edge.vendor?.xmind)
+  );
+}
+
+export function inferMapLayoutMode(map: MindMap): MapLayoutMode {
+  if (isMapLayoutMode(map.layoutMode)) {
+    return map.layoutMode;
+  }
+
+  return hasImportedLayoutData(map) ? "imported" : "structured";
+}
+
+export function shouldUseStructuredLayout(map: MindMap): boolean {
+  return inferMapLayoutMode(map) === "structured";
+}
+
+export function prepareMapLayout(map: MindMap): MindMap {
+  const layoutMode = inferMapLayoutMode(map);
+  const connectedMap: MindMap = {
+    ...map,
+    layoutMode,
+    nodes: enforceRootConnectivity(map.nodes, map.rootId),
+  };
+
+  return layoutMode === "structured" ? layoutStructuredMap(connectedMap) : connectedMap;
+}
+
 export function normalizeMap(map?: MindMap, t: (key: string) => string = defaultTranslate): MindMap {
   if (!map) {
     return {
       id: "map1",
       title: t("map.sampleMap"),
       rootId: "root",
+      layoutMode: "structured",
       edges: [],
       nodes: {
         root: {
@@ -192,11 +231,16 @@ export function normalizeMap(map?: MindMap, t: (key: string) => string = default
       )
     : [];
 
-  return {
+  const normalizedMap: MindMap = {
     ...map,
     rootId,
     nodes: connectedNodes,
     edges: normalizedEdges,
+  };
+
+  return {
+    ...normalizedMap,
+    layoutMode: inferMapLayoutMode(normalizedMap),
   };
 }
 

@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   InteractionManager,
   Keyboard,
-  PixelRatio,
   Platform,
   Pressable,
   Text,
@@ -20,29 +19,27 @@ import Svg, { Circle, Defs, G, Pattern, Rect, Text as SvgText } from "react-nati
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useTranslation } from "@/src/lang/LanguagePreference";
 
-import EdgeView, { EdgePoint } from "../../components/EdgeView";
+import EdgeView from "../../components/EdgeView";
 import EditableNodeView from "../../components/EditableNodeView";
 import NodeInspector from "../../components/NodeInspector";
 import ZoomableCanvas, { CanvasTransform, ZoomableCanvasHandle } from "../../components/ZoomableCanvas";
-import { EdgeStyle, MindMap, MindMapNode, NodeAttachment, NodeShape, RelationshipEdge } from "../../types/map";
+import { EdgeStyle, MindMap, MindMapNode, NodeAttachment, NodeShape } from "../../types/map";
 import {
-  LOCAL_ROUTE_OBSTACLE_LIMIT,
   DEFAULT_RELATIONSHIP_EDGE,
   DOT_GRID_LARGE,
   DOT_GRID_SMALL,
   EDGE_PALETTE,
-  MAX_RENDERED_EDGES_PER_FRAME,
   PROGRESSIVE_RENDER_NODE_LIMIT,
   RELATIONSHIP_LINK_COLOR,
   VIEWPORT_CULL_NODE_LIMIT,
 } from "./constants";
 import {
   collectVisibleNodeIds,
-  enforceRootConnectivity,
-  layoutStructuredMap,
+  hasImportedLayoutData,
   hasRelationshipEdge,
   normalizeMap,
   normalizeSearchValue,
+  prepareMapLayout,
   removeRelationshipEdge,
 } from "./mapModel";
 import {
@@ -51,18 +48,14 @@ import {
   getDisplayNodeTitle,
   getNodeImageAttachment,
   INSERTION_SLOT_X_GAP,
-  makeNodeRouteRect,
   NODE_IMAGE_THUMB_SIZE,
-  nearestRouteObstacles,
-  routeEdgePoints,
-  routeSimpleEdgePoints,
-  routeIntersectsRect,
-  routeIntersectsRoute,
-  type RouteRect,
-  RoutedEdge,
-  routeSegmentRects,
 } from "./routing";
-import { buildRelationshipDisplayColors, type RouteColorRef } from "./routeColors";
+import {
+  getNodeRenderBounds,
+  useMapCanvasMetrics,
+  viewportContainsNode,
+} from "./canvasGeometry";
+import { useMapEdgeRouting } from "./useMapEdgeRouting";
 import { ui } from "./uiStyles";
 import { styles } from "../MapScreen.styles";
 
@@ -70,127 +63,6 @@ type Props = {
   initialMap?: MindMap;
   onMapChange?: (map: MindMap) => void;
 };
-
-type WorldViewport = {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-};
-
-type CommittedRoute = {
-  id: string;
-  points: EdgePoint[];
-};
-
-type RelationshipRouteCache = {
-  routes: Map<string, RoutedEdge>;
-  signatures: Map<string, string>;
-  dirty: Set<string>;
-};
-
-function snapshotRoutes(routes: Map<string, RoutedEdge>) {
-  const snapshot: Record<string, RoutedEdge> = {};
-
-  for (const [id, route] of routes) {
-    snapshot[id] = route;
-  }
-
-  return snapshot;
-}
-
-function viewportContainsNode(viewport: WorldViewport, node: MindMapNode, isRoot: boolean) {
-  const { halfW, halfH } = estimateNodeHalfBounds(node, isRoot);
-  return (
-    node.x + halfW >= viewport.left &&
-    node.x - halfW <= viewport.right &&
-    node.y + halfH >= viewport.top &&
-    node.y - halfH <= viewport.bottom
-  );
-}
-
-function makeWorldViewport(
-  transform: CanvasTransform,
-  paddingMultiplier = 1.25,
-  worldWidth = transform.width,
-  worldHeight = transform.height,
-  surfaceWidth = transform.width,
-  surfaceHeight = transform.height
-): WorldViewport {
-  const safeScale = transform.scale || 1;
-  const scaleX = worldWidth / Math.max(1, surfaceWidth);
-  const scaleY = worldHeight / Math.max(1, surfaceHeight);
-  const left = ((0 - transform.width / 2 - transform.tx) / safeScale) * scaleX;
-  const right = ((transform.width - transform.width / 2 - transform.tx) / safeScale) * scaleX;
-  const top = ((0 - transform.height / 2 - transform.ty) / safeScale) * scaleY;
-  const bottom = ((transform.height - transform.height / 2 - transform.ty) / safeScale) * scaleY;
-  const padX = ((right - left) || transform.width) * paddingMultiplier;
-  const padY = ((bottom - top) || transform.height) * paddingMultiplier;
-
-  return {
-    left: left - padX,
-    right: right + padX,
-    top: top - padY,
-    bottom: bottom + padY,
-  };
-}
-
-function getNodeRenderBounds(node: MindMapNode, isRoot: boolean) {
-  const { halfW, halfH } = estimateNodeHalfBounds(node, isRoot);
-  return {
-    width: halfW * 2,
-    height: halfH * 2,
-    x: node.x - halfW,
-    y: node.y - halfH,
-  };
-}
-
-function getMapBounds(nodes: MindMapNode[], rootId: string) {
-  if (nodes.length === 0) {
-    return { left: 0, right: 0, top: 0, bottom: 0, width: 1, height: 1, centerX: 0, centerY: 0 };
-  }
-
-  let left = Infinity;
-  let right = -Infinity;
-  let top = Infinity;
-  let bottom = -Infinity;
-
-  for (const node of nodes) {
-    const { halfW, halfH } = estimateNodeHalfBounds(node, node.id === rootId);
-    left = Math.min(left, node.x - halfW);
-    right = Math.max(right, node.x + halfW);
-    top = Math.min(top, node.y - halfH);
-    bottom = Math.max(bottom, node.y + halfH);
-  }
-
-  const width = Math.max(1, right - left);
-  const height = Math.max(1, bottom - top);
-
-  return {
-    left,
-    right,
-    top,
-    bottom,
-    width,
-    height,
-    centerX: (left + right) / 2,
-    centerY: (top + bottom) / 2,
-  };
-}
-
-function getStructuredTreeEdgePoints(parentNode: MindMapNode, childNode: MindMapNode): EdgePoint[] {
-  const side = childNode.x < parentNode.x ? -1 : 1;
-  const horizontalGap = Math.max(60, Math.min(96, Math.abs(childNode.x - parentNode.x) * 0.42));
-  const parentExitX = parentNode.x + side * horizontalGap;
-  const childEntryX = childNode.x - side * horizontalGap;
-
-  return [
-    { x: parentNode.x, y: parentNode.y },
-    { x: parentExitX, y: parentNode.y },
-    { x: childEntryX, y: childNode.y },
-    { x: childNode.x, y: childNode.y },
-  ];
-}
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -244,7 +116,6 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   const [bigM, setBigM] = useState(false);
   const [bigV, setBigV] = useState(false);
   const [sr, setSr] = useState(false);
-  const [rre, setRre] = useState<Record<string, RoutedEdge>>({});
   const [ct, setCt] = useState<CanvasTransform>({
     tx: 0,
     ty: 0,
@@ -252,82 +123,39 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     width: screenW,
     height: screenH,
   });
-  const [map, setMap] = useState<MindMap>(() => layoutStructuredMap(normalizeMap(initialMap, t)));
+  const [map, setMap] = useState<MindMap>(() => prepareMapLayout(normalizeMap(initialMap, t)));
   const didNotifyMapChange = useRef(false);
   const mapRef = useRef(map);
   const canvasRef = useRef<ZoomableCanvasHandle | null>(null);
   const didAutoFitMapIdRef = useRef<string | null>(null);
   const zhRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mtRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rcr = useRef<Map<string, RoutedEdge>>(new Map());
-  const rrcr = useRef<RelationshipRouteCache>({
-    routes: new Map(),
-    signatures: new Map(),
-    dirty: new Set(),
-  });
 
   const lm = lnk !== null;
   const cpm = cpId !== null;
   const totalNodeCount = Object.keys(map.nodes).length;
-  const useCappedSurface = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
-  const worldReach = useMemo(() => {
-    const entries = Object.values(map.nodes);
-    if (entries.length === 0) {
-      return { maxX: 0, maxY: 0 };
-    }
-
-    let maxReachX = 0;
-    let maxReachY = 0;
-
-    for (const node of entries) {
-      const { halfW, halfH } = estimateNodeHalfBounds(node, node.id === map.rootId);
-      maxReachX = Math.max(maxReachX, Math.abs(node.x) + halfW);
-      maxReachY = Math.max(maxReachY, Math.abs(node.y) + halfH);
-    }
-
-    return {
-      maxX: maxReachX,
-      maxY: maxReachY,
-    };
-  }, [map.nodes, map.rootId]);
-
-  const androidSurfaceCap = Math.max(2400, Math.round(8200 / PixelRatio.get()));
-  const largeSurfaceCap = Platform.OS === "android" ? androidSurfaceCap : 9000;
-  const worldPaddingX = Math.max(isLandscape ? 520 : 460, screenW * (useCappedSurface ? 1.15 : 0.62));
-  const worldPaddingY = Math.max(isLandscape ? 460 : 520, screenH * (useCappedSurface ? 1.1 : 0.52));
-  const minWorldW = Math.max(1200, screenW * 1.6);
-  const minWorldH = Math.max(1200, screenH * 1.6);
-  const desiredWorldW = Math.round(Math.max(minWorldW, (worldReach.maxX + worldPaddingX) * 2));
-  const desiredWorldH = Math.round(Math.max(minWorldH, (worldReach.maxY + worldPaddingY) * 2));
-  const WORLD_W = useCappedSurface
-    ? desiredWorldW
-    : Platform.OS === "android"
-      ? Math.min(androidSurfaceCap, desiredWorldW)
-      : desiredWorldW;
-  const WORLD_H = useCappedSurface
-    ? desiredWorldH
-    : Platform.OS === "android"
-      ? Math.min(androidSurfaceCap, desiredWorldH)
-      : desiredWorldH;
-  const SURFACE_W = useCappedSurface ? Math.min(largeSurfaceCap, desiredWorldW) : WORLD_W;
-  const SURFACE_H = useCappedSurface ? Math.min(largeSurfaceCap, desiredWorldH) : WORLD_H;
-  const worldToSurfaceX = useCallback(
-    (x: number) => x * (SURFACE_W / Math.max(1, WORLD_W)),
-    [SURFACE_W, WORLD_W]
-  );
-  const worldToSurfaceY = useCallback(
-    (y: number) => y * (SURFACE_H / Math.max(1, WORLD_H)),
-    [SURFACE_H, WORLD_H]
-  );
-  const surfaceToWorldX = useCallback(
-    (x: number) => x * (WORLD_W / Math.max(1, SURFACE_W)),
-    [SURFACE_W, WORLD_W]
-  );
-  const surfaceToWorldY = useCallback(
-    (y: number) => y * (WORLD_H / Math.max(1, SURFACE_H)),
-    [SURFACE_H, WORLD_H]
-  );
-  const VIEWBOX = `${-WORLD_W / 2} ${-WORLD_H / 2} ${WORLD_W} ${WORLD_H}`;
+  const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
+  const {
+    WORLD_W,
+    WORLD_H,
+    SURFACE_W,
+    SURFACE_H,
+    VIEWBOX,
+    mapBounds,
+    worldViewport,
+    worldToSurfaceX,
+    worldToSurfaceY,
+    surfaceToWorldX,
+    surfaceToWorldY,
+  } = useMapCanvasMetrics({
+    nodes,
+    rootId: map.rootId,
+    totalNodeCount,
+    screenW,
+    screenH,
+    isLandscape,
+    transform: ct,
+  });
   const backgroundBase = isDark ? "#020617" : "#f8fafc";
   const showDotGrid = true;
   const dotMinor = isDark ? "rgba(148,163,184,0.18)" : "rgba(148,163,184,0.28)";
@@ -356,10 +184,6 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   }, [map]);
 
   useEffect(() => {
-    rcr.current.clear();
-  }, [map.nodes, map.edges]);
-
-  useEffect(() => {
     if (!didNotifyMapChange.current) {
       didNotifyMapChange.current = true;
       return;
@@ -371,10 +195,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   const applyMap = (updater: (prev: MindMap) => MindMap) => {
     setMap((prev) => {
       const next = updater(prev);
-      return layoutStructuredMap({
-        ...next,
-        nodes: enforceRootConnectivity(next.nodes, next.rootId),
-      });
+      return prepareMapLayout(next);
     });
   };
 
@@ -389,8 +210,6 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     };
   }, []);
 
-  const nodes = useMemo(() => Object.values(map.nodes), [map.nodes]);
-  const mapBounds = useMemo(() => getMapBounds(nodes, map.rootId), [map.rootId, nodes]);
   const viditelneIdcka = useMemo(() => collectVisibleNodeIds(map), [map]);
   const viditelneUzly = useMemo(
     () => nodes.filter((node) => viditelneIdcka.has(node.id)),
@@ -398,32 +217,12 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
   );
   const velkaMapa = totalNodeCount >= PROGRESSIVE_RENDER_NODE_LIMIT;
   const orezVyrezu = totalNodeCount > VIEWPORT_CULL_NODE_LIMIT;
-  const importRozlozenie = useMemo(() => {
-    if (map.importedFormat?.sourceFormat === "mm" || map.importedFormat?.sourceFormat === "xmind") {
-      return true;
-    }
-
-    return (
-      nodes.some((node) => !!node.vendor?.mm || !!node.vendor?.xmind) ||
-      map.edges.some((edge) => !!edge.vendor?.mm || !!edge.vendor?.xmind)
-    );
-  }, [map.edges, map.importedFormat?.sourceFormat, nodes]);
+  const importRozlozenie = useMemo(() => hasImportedLayoutData(map), [map]);
   const mudreCesty = velkaMapa || importRozlozenie;
   const smartRelationshipRoutes = !mudreCesty;
   const svgNodeMode = velkaMapa || importRozlozenie;
   const kreslitObsah = !velkaMapa || bigM;
   const nacitavaVelka = velkaMapa && !bigV;
-  const svetovyVyrez = useMemo(
-    () => makeWorldViewport(
-      ct,
-      velkaMapa ? 4.5 : 0.35,
-      WORLD_W,
-      WORLD_H,
-      SURFACE_W,
-      SURFACE_H
-    ),
-    [WORLD_H, WORLD_W, SURFACE_H, SURFACE_W, ct, velkaMapa]
-  );
   const kresleneUzly = useMemo(() => {
     if (!velkaMapa) {
       return viditelneUzly;
@@ -436,7 +235,7 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     }
 
     const nextNodes = viditelneUzly.filter((node) =>
-      viewportContainsNode(svetovyVyrez, node, node.id === map.rootId)
+      viewportContainsNode(worldViewport, node, node.id === map.rootId)
     );
     const included = new Set(nextNodes.map((node) => node.id));
 
@@ -477,48 +276,15 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
     orezVyrezu,
     viditelneIdcka,
     viditelneUzly,
-    svetovyVyrez,
+    worldViewport,
   ]);
   const kresleneIdcka = useMemo(
     () => new Set(kresleneUzly.map((node) => node.id)),
     [kresleneUzly]
   );
-  const prekazkyCiest = useMemo(
-    () => smartRelationshipRoutes
-      ? kresleneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 26))
-      : [],
-    [map.rootId, kresleneUzly, smartRelationshipRoutes]
-  );
-  const jednoduchePrekazkyVztahov = useMemo(
-    () => smartRelationshipRoutes
-      ? []
-      : kresleneUzly.map((node) => makeNodeRouteRect(node, node.id === map.rootId, 20)),
-    [map.rootId, kresleneUzly, smartRelationshipRoutes]
-  );
-  const verziaPrekazokCiest = useMemo(() => {
-    if (!smartRelationshipRoutes) {
-      return "direct";
-    }
-
-    let hash = 2166136261;
-
-    for (const node of kresleneUzly) {
-      for (let index = 0; index < node.id.length; index += 1) {
-        hash = Math.imul(hash ^ node.id.charCodeAt(index), 16777619);
-      }
-
-      hash = Math.imul(hash ^ Math.round(node.x), 16777619);
-      hash = Math.imul(hash ^ Math.round(node.y), 16777619);
-      hash = Math.imul(hash ^ Math.round(node.size ?? 0), 16777619);
-      hash = Math.imul(hash ^ node.children.length, 16777619);
-      hash = Math.imul(hash ^ (node.collapsed ? 1 : 0), 16777619);
-    }
-
-    return `${kresleneUzly.length}:${hash >>> 0}`;
-  }, [kresleneUzly, smartRelationshipRoutes]);
   useEffect(() => {
     setSr(true);
-  }, [velkaMapa, map.id, svetovyVyrez.left, svetovyVyrez.right, svetovyVyrez.top, svetovyVyrez.bottom]);
+  }, [velkaMapa, map.id, worldViewport.left, worldViewport.right, worldViewport.top, worldViewport.bottom]);
   useEffect(() => {
     if (!velkaMapa) {
       setBigM(true);
@@ -554,428 +320,22 @@ export default function MapScreen({ initialMap, onMapChange }: Props) {
       }
     };
   }, [bigM, velkaMapa, map.id]);
-  const chooseEdgeRoute = useCallback((
-    id: string,
-    fromNode: MindMapNode,
-    toNode: MindMapNode,
-    excludedIds: Set<string>,
-    committedRoutes: CommittedRoute[],
-    baseSeed: number,
-    styleKey: string,
-    availableRouteObstacles: RouteRect[]
-  ): { drawPoints?: EdgePoint[]; committedPoints: EdgePoint[] } => {
-    const directPoints = [fromNode, toNode];
-    const nodeObstacles = availableRouteObstacles.filter((rect) => !excludedIds.has(rect.id));
-    const directHitsNode = nodeObstacles.some((rect) => routeIntersectsRect(directPoints, rect));
-    const directHitsEdge = committedRoutes.some((route) =>
-      routeIntersectsRoute(directPoints, route.points)
-    );
-    const shouldRouteEdge = !mudreCesty || directHitsNode || directHitsEdge;
-
-    if (!shouldRouteEdge) {
-      return { drawPoints: directPoints, committedPoints: directPoints };
-    }
-
-    const localNodeObstacles = mudreCesty
-      ? nearestRouteObstacles(fromNode, toNode, availableRouteObstacles, excludedIds, LOCAL_ROUTE_OBSTACLE_LIMIT)
-      : availableRouteObstacles.filter((rect) => !excludedIds.has(rect.id));
-    const committedSegmentRects = committedRoutes.flatMap((route) =>
-      routeSegmentRects(route.points, route.id)
-    );
-    const routeObstaclesForEdge = [...localNodeObstacles, ...committedSegmentRects];
-    const scoreRoute = (points: EdgePoint[]) => {
-      const nodeHits = nodeObstacles.reduce(
-        (count, rect) => count + (routeIntersectsRect(points, rect) ? 1 : 0),
-        0
-      );
-      const edgeHits = committedRoutes.reduce(
-        (count, route) => count + (routeIntersectsRoute(points, route.points) ? 1 : 0),
-        0
-      );
-      const bendPenalty = Math.max(0, points.length - 2) * 0.1;
-      const lengthPenalty = points.slice(0, -1).reduce((sum, point, index) => {
-        const next = points[index + 1];
-        return sum + Math.hypot(next.x - point.x, next.y - point.y);
-      }, 0) * 0.001;
-
-      return {
-        nodeHits,
-        edgeHits,
-        score: nodeHits * 100000 + edgeHits * 10000 + bendPenalty + lengthPenalty,
-      };
-    };
-    const cacheKey = [
-      id,
-      fromNode.x,
-      fromNode.y,
-      toNode.x,
-      toNode.y,
-      styleKey,
-      routeObstaclesForEdge.map((rect) => rect.id).join(","),
-    ].join(":");
-    const cached = rcr.current.get(cacheKey);
-    if (cached?.points) {
-      const cachedScore = scoreRoute(cached.points);
-      if (cachedScore.nodeHits === 0 && cachedScore.edgeHits === 0) {
-        return { drawPoints: cached.points, committedPoints: cached.points };
-      }
-    }
-
-    const seeds = mudreCesty
-      ? [baseSeed, baseSeed + 3, baseSeed + 6, baseSeed + 11]
-      : [baseSeed];
-    let bestPoints: EdgePoint[] | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    let bestNodeHits = Number.POSITIVE_INFINITY;
-    let bestEdgeHits = Number.POSITIVE_INFINITY;
-
-    for (const seed of seeds) {
-      const points = routeEdgePoints(fromNode, toNode, routeObstaclesForEdge, seed);
-      const { nodeHits, edgeHits, score } = scoreRoute(points);
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestPoints = points;
-        bestNodeHits = nodeHits;
-        bestEdgeHits = edgeHits;
-      }
-
-      if (nodeHits === 0 && edgeHits === 0) {
-        break;
-      }
-    }
-
-    if (bestNodeHits > 0 || bestEdgeHits > 0) {
-      const fallbackSeeds = Array.from(new Set([
-        ...seeds,
-        baseSeed + 17,
-        baseSeed + 23,
-        baseSeed + 31,
-        baseSeed + 47,
-      ]));
-
-      for (const seed of fallbackSeeds) {
-        const points = routeEdgePoints(fromNode, toNode, nodeObstacles, seed);
-        const { nodeHits, edgeHits, score } = scoreRoute(points);
-
-        if (score < bestScore) {
-          bestScore = score;
-          bestPoints = points;
-          bestNodeHits = nodeHits;
-          bestEdgeHits = edgeHits;
-        }
-
-        if (nodeHits === 0 && edgeHits === 0) {
-          break;
-        }
-      }
-
-      if (bestNodeHits > 0 || bestEdgeHits > 0) {
-        const fullRouteObstacles = [...nodeObstacles, ...committedSegmentRects];
-
-        for (const seed of fallbackSeeds) {
-          const points = routeEdgePoints(fromNode, toNode, fullRouteObstacles, seed);
-          const { nodeHits, edgeHits, score } = scoreRoute(points);
-
-          if (score < bestScore) {
-            bestScore = score;
-            bestPoints = points;
-            bestNodeHits = nodeHits;
-            bestEdgeHits = edgeHits;
-          }
-
-          if (nodeHits === 0 && edgeHits === 0) {
-            break;
-          }
-        }
-      }
-    }
-
-    const points = bestPoints ?? directPoints;
-    rcr.current.set(cacheKey, { id, points });
-    if (rcr.current.size > 1200) {
-      rcr.current.clear();
-    }
-
-    return { drawPoints: points, committedPoints: points };
-  }, [mudreCesty]);
-
-  const routedTreeEdges = useMemo(() => {
-    if (!sr) {
-      return {};
-    }
-
-    const routes: Record<string, RoutedEdge> = {};
-    let routeIndex = 0;
-
-    for (const parentNode of kresleneUzly) {
-      if (routeIndex >= MAX_RENDERED_EDGES_PER_FRAME) {
-        break;
-      }
-
-      if (!kresleneIdcka.has(parentNode.id)) {
-        continue;
-      }
-
-      for (let childIndex = 0; childIndex < parentNode.children.length; childIndex += 1) {
-        if (routeIndex >= MAX_RENDERED_EDGES_PER_FRAME) {
-          break;
-        }
-
-        const childId = parentNode.children[childIndex];
-        const childNode = map.nodes[childId];
-        if (!childNode || !kresleneIdcka.has(childId)) {
-          continue;
-        }
-
-        const id = `tree-${parentNode.id}-${childId}`;
-        routes[id] = {
-          id,
-          points: getStructuredTreeEdgePoints(parentNode, childNode),
-        };
-        routeIndex += 1;
-      }
-    }
-
-    return routes;
-  }, [map.nodes, kresleneIdcka, kresleneUzly, sr]);
-  const stromHrany = useMemo(() => {
-    const refs: { id: string; parentNode: MindMapNode; childNode: MindMapNode }[] = [];
-
-    for (const parentNode of kresleneUzly) {
-      for (const childId of parentNode.children) {
-        if (refs.length >= MAX_RENDERED_EDGES_PER_FRAME) {
-          return refs;
-        }
-
-        const childNode = map.nodes[childId];
-        if (!childNode || !kresleneIdcka.has(childId)) {
-          continue;
-        }
-
-        refs.push({
-          id: `tree-${parentNode.id}-${childId}`,
-          parentNode,
-          childNode,
-        });
-      }
-    }
-
-    return refs;
-  }, [map.nodes, kresleneIdcka, kresleneUzly]);
-  const vztahHrany = useMemo(() => {
-    const relationshipLimit = velkaMapa
-      ? MAX_RENDERED_EDGES_PER_FRAME
-      : Math.max(0, MAX_RENDERED_EDGES_PER_FRAME - stromHrany.length);
-    if (relationshipLimit === 0) {
-      return [];
-    }
-
-    const refs: RelationshipEdge[] = [];
-    for (const edge of map.edges) {
-      if (refs.length >= relationshipLimit) {
-        break;
-      }
-
-      if (kresleneIdcka.has(edge.fromId) && kresleneIdcka.has(edge.toId)) {
-        refs.push(edge);
-      }
-    }
-
-    return refs;
-  }, [map.edges, stromHrany.length, kresleneIdcka, velkaMapa]);
-  const jednoducheTrasyVztahov = useMemo(() => {
-    if (smartRelationshipRoutes) {
-      return {};
-    }
-
-    const routes: Record<string, RoutedEdge> = {};
-    vztahHrany.forEach((edge, edgeIndex) => {
-      const fromNode = map.nodes[edge.fromId];
-      const toNode = map.nodes[edge.toId];
-      if (!fromNode || !toNode) {
-        return;
-      }
-
-      const obstacles = jednoduchePrekazkyVztahov.filter(
-        (rect) => rect.id !== edge.fromId && rect.id !== edge.toId
-      );
-      routes[edge.id] = {
-        id: edge.id,
-        points: routeSimpleEdgePoints(fromNode, toNode, obstacles, edgeIndex + 17),
-      };
-    });
-
-    return routes;
-  }, [jednoduchePrekazkyVztahov, map.nodes, smartRelationshipRoutes, vztahHrany]);
-  const podpisyVztahov = useMemo(() => {
-    if (!smartRelationshipRoutes) {
-      return [];
-    }
-
-    return vztahHrany.map((edge, edgeIndex) => {
-      const fromNode = map.nodes[edge.fromId];
-      const toNode = map.nodes[edge.toId];
-
-      return {
-        id: edge.id,
-        signature: [
-          edgeIndex,
-          edge.id,
-          edge.fromId,
-          edge.toId,
-          fromNode?.x ?? "",
-          fromNode?.y ?? "",
-          toNode?.x ?? "",
-          toNode?.y ?? "",
-          edge.style ?? "",
-          edge.width ?? "",
-          edge.color ?? "",
-          mudreCesty ? 1 : 0,
-          verziaPrekazokCiest,
-        ].join("|"),
-      };
-    });
-  }, [map.nodes, mudreCesty, smartRelationshipRoutes, verziaPrekazokCiest, vztahHrany]);
-  useEffect(() => {
-    const cache = rrcr.current;
-    const liveIds = new Set(podpisyVztahov.map((item) => item.id));
-    let changed = false;
-
-    for (const id of Array.from(cache.routes.keys())) {
-      if (!liveIds.has(id)) {
-        cache.routes.delete(id);
-        cache.signatures.delete(id);
-        cache.dirty.delete(id);
-        changed = true;
-      }
-    }
-
-    for (const item of podpisyVztahov) {
-      if (cache.signatures.get(item.id) !== item.signature) {
-        cache.signatures.set(item.id, item.signature);
-        cache.dirty.add(item.id);
-      }
-    }
-
-    if (!smartRelationshipRoutes) {
-      cache.routes.clear();
-      cache.signatures.clear();
-      cache.dirty.clear();
-      setRre((current) => (Object.keys(current).length === 0 ? current : {}));
-      return;
-    }
-
-    if (!sr || cache.dirty.size === 0) {
-      if (changed) {
-        setRre(snapshotRoutes(cache.routes));
-      }
-      return;
-    }
-
-    let cancelled = false;
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      if (cancelled) {
-        return;
-      }
-
-      const currentCache = rrcr.current;
-      const dirtyIds = new Set(currentCache.dirty);
-      if (dirtyIds.size === 0) {
-        return;
-      }
-
-      const nextRoutes = new Map(currentCache.routes);
-      const committedRoutes: CommittedRoute[] = stromHrany.map(({ id, parentNode, childNode }) => ({
-        id,
-        points: routedTreeEdges[id]?.points ?? getStructuredTreeEdgePoints(parentNode, childNode),
-      }));
-
-      vztahHrany.forEach((edge, edgeIndex) => {
-        const fromNode = map.nodes[edge.fromId];
-        const toNode = map.nodes[edge.toId];
-        const existingRoute = nextRoutes.get(edge.id);
-
-        if (!fromNode || !toNode || !kresleneIdcka.has(edge.fromId) || !kresleneIdcka.has(edge.toId)) {
-          nextRoutes.delete(edge.id);
-          currentCache.dirty.delete(edge.id);
-          return;
-        }
-
-        if (!dirtyIds.has(edge.id)) {
-          if (existingRoute?.points) {
-            committedRoutes.push({ id: edge.id, points: existingRoute.points });
-          }
-          return;
-        }
-
-        const route = chooseEdgeRoute(
-          edge.id,
-          fromNode,
-          toNode,
-          new Set([edge.fromId, edge.toId]),
-          committedRoutes,
-          edgeIndex + 97,
-          `${edge.style ?? "dashed"}:${edge.width ?? 2}`,
-          prekazkyCiest
-        );
-        const points = route.drawPoints ?? route.committedPoints;
-        nextRoutes.set(edge.id, {
-          id: edge.id,
-          points,
-        });
-        committedRoutes.push({ id: edge.id, points: route.committedPoints });
-        currentCache.dirty.delete(edge.id);
-      });
-
-      currentCache.routes = nextRoutes;
-      setRre(snapshotRoutes(currentCache.routes));
-    });
-
-    return () => {
-      cancelled = true;
-      interaction.cancel?.();
-    };
-  }, [
-    chooseEdgeRoute,
-    kresleneIdcka,
-    map.nodes,
-    podpisyVztahov,
-    prekazkyCiest,
+  const {
     routedTreeEdges,
+    treeEdges: stromHrany,
+    relationshipEdges: vztahHrany,
+    simpleRelationshipRoutes: jednoducheTrasyVztahov,
+    smartRelationshipRoutesById: rre,
+    relationshipDisplayColors: farbyVztahov,
+  } = useMapEdgeRouting({
+    map,
+    renderedNodes: kresleneUzly,
+    renderedNodeIds: kresleneIdcka,
+    isLargeMap: velkaMapa,
+    preferSelectiveRouting: mudreCesty,
     smartRelationshipRoutes,
-    sr,
-    stromHrany,
-    vztahHrany,
-  ]);
-  const farbyVztahov = useMemo(() => {
-    if (!smartRelationshipRoutes) {
-      return {};
-    }
-
-    const treeRoutes: RouteColorRef[] = stromHrany
-      .map(({ id, parentNode, childNode }) => ({
-        id,
-        points: routedTreeEdges[id]?.points ?? [parentNode, childNode],
-        color: childNode.edgeToParent?.color ?? "#9ca3af",
-      }))
-      .filter((route) => route.points.length >= 2);
-    const relationshipRoutes: RouteColorRef[] = vztahHrany
-      .map((edge) => {
-        const points = rre[edge.id]?.points;
-        if (!points || points.length < 2) {
-          return null;
-        }
-
-        return {
-          id: edge.id,
-          points,
-          color: edge.color ?? "#94a3b8",
-        };
-      })
-      .filter((route): route is RouteColorRef => !!route);
-    return buildRelationshipDisplayColors(treeRoutes, relationshipRoutes, EDGE_PALETTE);
-  }, [vztahHrany, stromHrany, rre, routedTreeEdges, smartRelationshipRoutes]);
+    routesReady: sr,
+  });
   const postupMapy = velkaMapa
     ? bigV ? 100 : bigM ? 90 : 55
     : 100;

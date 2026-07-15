@@ -3,7 +3,7 @@
  * Abstrakt: Prevádza internú myšlienkovú mapu do štruktúr a súborov formátu XMind.
  */
 import { MindMap, MindMapNode, NodeAttachment, RelationshipEdge } from "../types/map";
-import { layoutStructuredMap } from "../screens/mapScreen/mapModel";
+import { prepareMapLayout } from "../screens/mapScreen/mapModel";
 import { makeNodeRouteRect, routeEdgePoints } from "../screens/mapScreen/routing";
 import templateContent from "./templates/content.json";
 
@@ -701,7 +701,7 @@ function buildRelationships(
 }
 
 export function exportToXmindZenContentJson(map: MindMap): string {
-  const exportMap = layoutStructuredMap(map);
+  const exportMap = prepareMapLayout(map);
   if (!exportMap.nodes[exportMap.rootId]) throw new Error("Root node not found");
 
   const importedRawContent = exportMap.importedFormat?.vendor?.xmind?.rawContent;
